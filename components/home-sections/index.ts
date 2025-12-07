@@ -1,0 +1,10 @@
+export { BannersSection } from './BannersSection';
+export { DealsSection } from './DealsSection';
+export { BestsellersSection } from './BestsellersSection';
+export type { BestsellerCategory } from './BestsellersSection';
+export { GroceriesSection } from './GroceriesSection';
+export type { GroceryCategory } from './GroceriesSection';
+export { FeaturedProductsSection } from './FeaturedProductsSection';
+export type { FeaturedProduct } from './FeaturedProductsSection';
+export { RecipesSection } from './RecipesSection';
+export type { RecipeCategory } from './RecipesSection';

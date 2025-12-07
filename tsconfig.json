@@ -1,0 +1,37 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@/*": [
+        "./*"
+      ],
+      "@thriptify/tokens": [
+        "../thriptify-libs/packages/tokens/src/index.ts"
+      ],
+      "@thriptify/tokens/*": [
+        "../thriptify-libs/packages/tokens/src/*"
+      ],
+      "@thriptify/ui-elements": [
+        "../thriptify-libs/packages/ui-elements/src/index.ts"
+      ],
+      "@thriptify/ui-elements/*": [
+        "../thriptify-libs/packages/ui-elements/src/*"
+      ],
+      "@thriptify/components": [
+        "../thriptify-libs/packages/components/src/index.ts"
+      ],
+      "@thriptify/components/*": [
+        "../thriptify-libs/packages/components/src/*"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts",
+    "../thriptify-libs/packages/**/*.ts",
+    "../thriptify-libs/packages/**/*.tsx"
+  ]
+}
