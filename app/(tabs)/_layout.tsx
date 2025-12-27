@@ -8,6 +8,7 @@ import { usePathname, useRouter } from 'expo-router';
 
 const NAV_ITEMS = [
   { id: 'index', label: 'Home', icon: 'home' },
+  { id: 'recipes', label: 'Recipes', icon: 'restaurant' },
   { id: 'reorder', label: 'Order Again', icon: 'bag' },
   { id: 'categories', label: 'Categories', icon: 'grid' },
 ];
@@ -37,6 +38,7 @@ export default function TabLayout() {
           tabBarStyle: { display: 'none' },
         }}>
         <Tabs.Screen name="index" />
+        <Tabs.Screen name="recipes" />
         <Tabs.Screen name="reorder" />
         <Tabs.Screen name="categories" />
       </Tabs>
@@ -51,6 +53,7 @@ export default function TabLayout() {
           tabBarStyle: { display: 'none' },
         }}>
         <Tabs.Screen name="index" />
+        <Tabs.Screen name="recipes" />
         <Tabs.Screen name="reorder" />
         <Tabs.Screen name="categories" />
       </Tabs>

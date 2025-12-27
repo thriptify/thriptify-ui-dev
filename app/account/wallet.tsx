@@ -82,27 +82,27 @@ const TRANSACTIONS: Transaction[] = [
 
 const TRANSACTION_ICONS: Record<TransactionType, { icon: string; color: string; bgColor: string }> = {
   credit: {
-    icon: 'add-circle',
+    icon: 'plus',
     color: tokens.colors.semantic.status.success.default,
     bgColor: `${tokens.colors.semantic.status.success.default}15`,
   },
   debit: {
-    icon: 'remove-circle',
+    icon: 'minus',
     color: tokens.colors.semantic.status.error.default,
     bgColor: `${tokens.colors.semantic.status.error.default}15`,
   },
   refund: {
-    icon: 'refresh-circle',
+    icon: 'refresh',
     color: tokens.colors.semantic.brand.primary.default,
     bgColor: `${tokens.colors.semantic.brand.primary.default}15`,
   },
   cashback: {
-    icon: 'gift',
+    icon: 'star-fill',
     color: '#FF9800',
     bgColor: '#FFF3E0',
   },
   promo: {
-    icon: 'pricetag',
+    icon: 'tag-fill',
     color: '#9C27B0',
     bgColor: '#F3E5F5',
   },
@@ -154,7 +154,7 @@ export default function WalletScreen() {
         </Pressable>
         <Text variant="h3" style={styles.headerTitle}>Thriptify Money</Text>
         <Pressable style={styles.infoButton}>
-          <Icon name="help-circle" size="md" color={tokens.colors.semantic.text.secondary} />
+          <Icon name="info-circle" size="md" color={tokens.colors.semantic.text.secondary} />
         </Pressable>
       </View>
 
@@ -167,7 +167,7 @@ export default function WalletScreen() {
         <View style={styles.balanceCard}>
           <View style={styles.balanceHeader}>
             <View style={styles.walletIconLarge}>
-              <Icon name="wallet" size="xl" color={tokens.colors.semantic.surface.primary} />
+              <Text style={styles.walletEmoji}>💰</Text>
             </View>
             <Text style={styles.balanceLabel}>Available Balance</Text>
             <Text style={styles.balanceAmount}>${WALLET_DATA.balance.toFixed(2)}</Text>
@@ -178,7 +178,7 @@ export default function WalletScreen() {
             )}
           </View>
           <Pressable style={styles.addMoneyButton} onPress={handleAddMoney}>
-            <Icon name="add" size="sm" color={tokens.colors.semantic.brand.primary.default} />
+            <Icon name="plus" size="sm" color={tokens.colors.semantic.brand.primary.default} />
             <Text style={styles.addMoneyButtonText}>Add Money</Text>
           </Pressable>
         </View>
@@ -186,12 +186,12 @@ export default function WalletScreen() {
         {/* Stats Row */}
         <View style={styles.statsRow}>
           <View style={styles.statCard}>
-            <Icon name="trending-up" size="md" color={tokens.colors.semantic.status.success.default} />
+            <Text style={styles.statEmoji}>📈</Text>
             <Text style={styles.statValue}>${WALLET_DATA.lifetimeSavings.toFixed(2)}</Text>
             <Text style={styles.statLabel}>Lifetime Savings</Text>
           </View>
           <View style={styles.statCard}>
-            <Icon name="gift" size="md" color="#FF9800" />
+            <Text style={styles.statEmoji}>🎁</Text>
             <Text style={styles.statValue}>5%</Text>
             <Text style={styles.statLabel}>Cashback Rate</Text>
           </View>
@@ -200,7 +200,7 @@ export default function WalletScreen() {
         {/* Promo Section */}
         <Pressable style={styles.promoCard}>
           <View style={styles.promoContent}>
-            <Icon name="flash" size="lg" color="#FFD700" />
+            <Text style={styles.promoEmoji}>⚡</Text>
             <View style={styles.promoText}>
               <Text style={styles.promoTitle}>Get 10% Extra</Text>
               <Text style={styles.promoDescription}>Add $50 or more and get 10% bonus</Text>
@@ -340,7 +340,7 @@ export default function WalletScreen() {
               <Text style={styles.paymentMethodLabel}>Payment Method</Text>
               <Pressable style={styles.paymentMethodCard}>
                 <View style={styles.paymentMethodIcon}>
-                  <Icon name="logo-apple" size="md" color="#000000" />
+                  <Text style={styles.applePayEmoji}>🍎</Text>
                 </View>
                 <View style={styles.paymentMethodInfo}>
                   <Text style={styles.paymentMethodName}>Apple Pay</Text>
@@ -430,6 +430,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: tokens.spacing[3],
   },
+  walletEmoji: {
+    fontSize: 32,
+  },
   balanceLabel: {
     fontSize: 14,
     color: 'rgba(255,255,255,0.8)',
@@ -439,6 +442,7 @@ const styles = StyleSheet.create({
     fontSize: 40,
     fontWeight: '700',
     color: tokens.colors.semantic.surface.primary,
+    lineHeight: 52,
   },
   pendingCredits: {
     fontSize: 14,
@@ -483,6 +487,9 @@ const styles = StyleSheet.create({
     color: tokens.colors.semantic.text.secondary,
     marginTop: tokens.spacing[1],
   },
+  statEmoji: {
+    fontSize: 24,
+  },
   // Promo Card
   promoCard: {
     flexDirection: 'row',
@@ -510,6 +517,9 @@ const styles = StyleSheet.create({
   promoDescription: {
     fontSize: 13,
     color: 'rgba(255,255,255,0.9)',
+  },
+  promoEmoji: {
+    fontSize: 28,
   },
   // Transactions Section
   transactionsSection: {
@@ -736,6 +746,9 @@ const styles = StyleSheet.create({
   paymentMethodDetail: {
     fontSize: 13,
     color: tokens.colors.semantic.text.secondary,
+  },
+  applePayEmoji: {
+    fontSize: 20,
   },
   confirmButton: {
     backgroundColor: tokens.colors.semantic.brand.primary.default,

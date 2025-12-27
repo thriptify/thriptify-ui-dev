@@ -1,130 +1,248 @@
-import { ScrollView, StyleSheet, View, Pressable, Animated } from 'react-native';
-import { useState, useRef } from 'react';
+import { ScrollView, StyleSheet, View, Pressable, Animated, Platform, Modal, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useState, useRef, useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Icon, Image } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useCart } from '@/contexts/cart-context';
+import { useAppAuth } from '@/contexts/auth-context';
 import { FloatingCartButton } from '@/components/floating-cart-button';
 import { CollapsibleHeader } from '@/components/collapsible-header';
+import { useOrders } from '@/hooks/use-api';
 
-// Mock previous orders
-const PREVIOUS_ORDERS = [
-  {
-    id: 'order1',
-    date: 'Dec 4, 2025',
-    status: 'Delivered',
-    total: 45.99,
-    items: [
-      { id: 'p1', title: 'Organic Avocados', image: 'https://images.unsplash.com/photo-1523049673857-eb18f1d7b578?w=200&h=200&fit=crop', price: 4.99, quantity: 2, weight: '1 unit' },
-      { id: 'p2', title: 'Fresh Strawberries', image: 'https://images.unsplash.com/photo-1464965911861-746a04b4bca6?w=200&h=200&fit=crop', price: 5.49, quantity: 1, weight: '1 lb' },
-      { id: 'p3', title: 'Artisan Sourdough', image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=200&h=200&fit=crop', price: 6.99, quantity: 1, weight: '1 loaf' },
-    ],
-  },
-  {
-    id: 'order2',
-    date: 'Nov 28, 2025',
-    status: 'Delivered',
-    total: 32.47,
-    items: [
-      { id: 'p4', title: 'Greek Yogurt', image: 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=200&h=200&fit=crop', price: 5.49, quantity: 2, weight: '32 oz' },
-      { id: 'p5', title: 'Organic Bananas', image: 'https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=200&h=200&fit=crop', price: 2.99, quantity: 1, weight: '1 bunch' },
-    ],
-  },
-  {
-    id: 'order3',
-    date: 'Nov 20, 2025',
-    status: 'Delivered',
-    total: 58.23,
-    items: [
-      { id: 'p6', title: 'Fresh Orange Juice', image: 'https://images.unsplash.com/photo-1621506289937-a8e4df240d0b?w=200&h=200&fit=crop', price: 6.99, quantity: 2, weight: '64 oz' },
-      { id: 'p7', title: 'Whole Wheat Bread', image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=200&h=200&fit=crop', price: 4.49, quantity: 1, weight: '24 oz' },
-      { id: 'p8', title: 'Farm Fresh Eggs', image: 'https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?w=200&h=200&fit=crop', price: 5.99, quantity: 2, weight: '12 count' },
-    ],
-  },
-];
+// Types for UI display
+type DisplayOrderItem = {
+  id: string;
+  productId: string;
+  title: string;
+  image: string | null;
+  price: number;
+  quantity: number;
+};
 
-// Frequently bought items (extracted from orders)
-const FREQUENT_ITEMS = [
-  { id: 'f1', title: 'Organic Avocados', image: 'https://images.unsplash.com/photo-1523049673857-eb18f1d7b578?w=200&h=200&fit=crop', price: 4.99, originalPrice: 6.99, weight: '1 unit', orderCount: 8 },
-  { id: 'f2', title: 'Fresh Strawberries', image: 'https://images.unsplash.com/photo-1464965911861-746a04b4bca6?w=200&h=200&fit=crop', price: 5.49, weight: '1 lb', orderCount: 6 },
-  { id: 'f3', title: 'Greek Yogurt', image: 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=200&h=200&fit=crop', price: 5.49, weight: '32 oz', orderCount: 5 },
-  { id: 'f4', title: 'Artisan Sourdough', image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=200&h=200&fit=crop', price: 6.99, weight: '1 loaf', orderCount: 4 },
-  { id: 'f5', title: 'Organic Bananas', image: 'https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=200&h=200&fit=crop', price: 2.99, weight: '1 bunch', orderCount: 4 },
-];
+type DisplayOrder = {
+  id: string;
+  date: string;
+  status: string;
+  total: number;
+  items: DisplayOrderItem[];
+};
+
+type FrequentItem = {
+  id: string;
+  productId: string;
+  title: string;
+  image: string | null;
+  price: number;
+  orderCount: number;
+};
+
+// Helper to format date
+function formatOrderDate(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
+
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
 
 export default function ReorderScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { addItem } = useCart();
+  const { isAuthenticated, isGuest, exitGuestMode } = useAppAuth();
+  const { addItem, updateQuantity, getItemQuantity } = useCart();
   const [selectedTab, setSelectedTab] = useState<'orders' | 'frequent'>('orders');
+  const [selectedOrder, setSelectedOrder] = useState<DisplayOrder | null>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
 
-  const handleAddItem = (item: typeof FREQUENT_ITEMS[0]) => {
+  // Fetch real orders from API
+  const { data: ordersData, isLoading, error, refetch } = useOrders({ limit: 20 });
+
+  // Transform API orders to display format
+  const orders: DisplayOrder[] = useMemo(() => {
+    if (!ordersData?.orders) return [];
+    return ordersData.orders.map((order) => ({
+      id: order.id,
+      date: formatOrderDate(order.createdAt),
+      status: order.status.charAt(0).toUpperCase() + order.status.slice(1).replace(/_/g, ' '),
+      total: order.total,
+      items: order.items.map((item) => ({
+        id: item.id,
+        productId: item.productId,
+        title: item.productName,
+        image: item.productImage,
+        price: item.unitPrice,
+        quantity: item.quantity,
+      })),
+    }));
+  }, [ordersData]);
+
+  // Calculate frequently bought items from order history
+  const frequentItems: FrequentItem[] = useMemo(() => {
+    if (!ordersData?.orders) return [];
+
+    // Count occurrences of each product across all orders
+    const productCounts: Record<string, { item: FrequentItem; count: number }> = {};
+
+    ordersData.orders.forEach((order) => {
+      order.items.forEach((item) => {
+        if (!productCounts[item.productId]) {
+          productCounts[item.productId] = {
+            item: {
+              id: item.id,
+              productId: item.productId,
+              title: item.productName,
+              image: item.productImage,
+              price: item.unitPrice,
+              orderCount: 0,
+            },
+            count: 0,
+          };
+        }
+        productCounts[item.productId].count += 1;
+      });
+    });
+
+    // Sort by count and return top items
+    return Object.values(productCounts)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+      .map(({ item, count }) => ({
+        ...item,
+        orderCount: count,
+      }));
+  }, [ordersData]);
+
+  // Show sign-in prompt for unauthenticated users
+  if (!isAuthenticated) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.signInHeader, { paddingTop: insets.top + tokens.spacing[2] }]}>
+          <Text variant="h4" weight="semibold" style={styles.signInHeaderTitle}>Order Again</Text>
+        </View>
+        <View style={styles.signInContainer}>
+          <LinearGradient
+            colors={[tokens.colors.semantic.brand.primary.default, tokens.colors.semantic.brand.primary.hover]}
+            style={styles.signInIcon}
+          >
+            <Icon name="time" size="xl" color="#FFF" />
+          </LinearGradient>
+          <Text variant="h4" weight="semibold" style={styles.signInTitle}>Sign in to reorder</Text>
+          <Text style={styles.signInSubtitle}>
+            View your order history and quickly reorder your favorite items
+          </Text>
+          <Pressable
+            style={styles.signInButton}
+            onPress={() => exitGuestMode()}
+          >
+            <Text style={styles.signInButtonText}>Sign In or Create Account</Text>
+          </Pressable>
+          <Pressable style={styles.browseButton} onPress={() => router.push('/')}>
+            <Text style={styles.browseButtonText}>Browse Products</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  const handleAddItem = (item: FrequentItem) => {
     addItem({
-      id: item.id,
+      id: item.productId,
       title: item.title,
-      image: item.image,
+      image: item.image || '',
       price: item.price,
-      originalPrice: item.originalPrice,
-      weight: item.weight,
-      isVegetarian: true,
     });
   };
 
-  const handleReorderAll = (order: typeof PREVIOUS_ORDERS[0]) => {
+  const handleReorderAll = (order: DisplayOrder) => {
     order.items.forEach(item => {
       for (let i = 0; i < item.quantity; i++) {
         addItem({
-          id: item.id,
+          id: item.productId,
           title: item.title,
-          image: item.image,
+          image: item.image || '',
           price: item.price,
-          weight: item.weight,
-          isVegetarian: true,
         });
       }
     });
   };
 
-  const renderFrequentItem = ({ item }: { item: typeof FREQUENT_ITEMS[0] }) => (
-    <Pressable style={styles.frequentItemCard}>
-      <View style={styles.frequentItemImageContainer}>
-        <Image
-          source={{ uri: item.image }}
-          width="100%"
-          height={100}
-          borderRadius={8}
-        />
-        <Pressable
-          style={styles.frequentAddButton}
-          onPress={() => handleAddItem(item)}
-        >
-          <Text style={styles.frequentAddText}>ADD</Text>
-        </Pressable>
-      </View>
-      <View style={styles.frequentItemInfo}>
-        <Text style={styles.frequentItemWeight}>{item.weight}</Text>
-        <Text variant="caption" weight="medium" numberOfLines={2} style={styles.frequentItemTitle}>
-          {item.title}
-        </Text>
-        <Text style={styles.frequentOrderCount}>Ordered {item.orderCount} times</Text>
-        <View style={styles.frequentPriceRow}>
-          <Text style={styles.frequentPrice}>${item.price.toFixed(2)}</Text>
-          {item.originalPrice && (
-            <Text style={styles.frequentOriginalPrice}>${item.originalPrice.toFixed(2)}</Text>
-          )}
-        </View>
-      </View>
-    </Pressable>
-  );
+  const handleAddOrderItem = (item: DisplayOrderItem) => {
+    addItem({
+      id: item.productId,
+      title: item.title,
+      image: item.image || '',
+      price: item.price,
+    });
+  };
+
+  const handleQuantityChange = (itemId: string, delta: number) => {
+    const currentQty = getItemQuantity(itemId);
+    updateQuantity(itemId, currentQty + delta);
+  };
+
+  const handleOpenOrderDetails = (order: DisplayOrder) => {
+    setSelectedOrder(order);
+  };
+
+  const handleCloseOrderDetails = () => {
+    setSelectedOrder(null);
+  };
+
+  const handleReorderAllFromModal = () => {
+    if (selectedOrder) {
+      handleReorderAll(selectedOrder);
+      handleCloseOrderDetails();
+    }
+  };
 
   const handleSearch = (text: string) => {
     router.push(`/search?q=${encodeURIComponent(text)}`);
   };
 
+  // Loading state
+  if (isLoading) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.signInHeader, { paddingTop: insets.top + tokens.spacing[2] }]}>
+          <Text variant="h4" weight="semibold" style={styles.signInHeaderTitle}>Order Again</Text>
+        </View>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+          <Text style={styles.loadingText}>Loading your orders...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.signInHeader, { paddingTop: insets.top + tokens.spacing[2] }]}>
+          <Text variant="h4" weight="semibold" style={styles.signInHeaderTitle}>Order Again</Text>
+        </View>
+        <View style={styles.errorContainer}>
+          <View style={styles.emptyIconContainer}>
+            <Icon name="alert-circle" size="xl" color={tokens.colors.semantic.status.error.default} />
+          </View>
+          <Text variant="h4" weight="semibold" style={styles.emptyTitle}>Oops!</Text>
+          <Text style={styles.emptySubtitle}>{error}</Text>
+          <Pressable style={styles.shopNowButton} onPress={refetch}>
+            <Text style={styles.shopNowText}>Try Again</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   // Empty state for new users
-  if (PREVIOUS_ORDERS.length === 0) {
+  if (orders.length === 0) {
     return (
       <View style={styles.container}>
         <CollapsibleHeader
@@ -136,9 +254,9 @@ export default function ReorderScreen() {
             <View style={styles.emptyIconContainer}>
               <Icon name="time" size="xl" color={tokens.colors.semantic.text.tertiary} />
             </View>
-            <Text variant="h3" style={styles.emptyTitle}>No previous orders</Text>
+            <Text variant="h4" weight="semibold" style={styles.emptyTitle}>No orders yet</Text>
             <Text style={styles.emptySubtitle}>
-              Your order history will appear here once you place your first order
+              Your order history will appear here
             </Text>
             <Pressable style={styles.shopNowButton} onPress={() => router.push('/')}>
               <Text style={styles.shopNowText}>Start Shopping</Text>
@@ -156,95 +274,254 @@ export default function ReorderScreen() {
         searchPlaceholder="Search past orders..."
         onSearch={handleSearch}
       >
-        {/* Tabs */}
-        <View style={styles.tabsContainer}>
-          <Pressable
-            style={[styles.tab, selectedTab === 'orders' && styles.tabSelected]}
-            onPress={() => setSelectedTab('orders')}
-          >
-            <Text style={[styles.tabText, selectedTab === 'orders' && styles.tabTextSelected]}>
-              Previous Orders
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.tab, selectedTab === 'frequent' && styles.tabSelected]}
-            onPress={() => setSelectedTab('frequent')}
-          >
-            <Text style={[styles.tabText, selectedTab === 'frequent' && styles.tabTextSelected]}>
-              Frequently Bought
-            </Text>
-          </Pressable>
+        {/* Modern Segmented Tabs */}
+        <View style={styles.tabsWrapper}>
+          <View style={styles.tabsContainer}>
+            <Pressable
+              style={[styles.tab, selectedTab === 'orders' && styles.tabSelected]}
+              onPress={() => setSelectedTab('orders')}
+            >
+              <Icon
+                name="time"
+                size="xs"
+                color={selectedTab === 'orders' ? tokens.colors.semantic.surface.primary : tokens.colors.semantic.text.secondary}
+              />
+              <Text style={[styles.tabText, selectedTab === 'orders' && styles.tabTextSelected]}>
+                Orders
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.tab, selectedTab === 'frequent' && styles.tabSelected]}
+              onPress={() => setSelectedTab('frequent')}
+            >
+              <Icon
+                name="heart"
+                size="xs"
+                color={selectedTab === 'frequent' ? tokens.colors.semantic.surface.primary : tokens.colors.semantic.text.secondary}
+              />
+              <Text style={[styles.tabText, selectedTab === 'frequent' && styles.tabTextSelected]}>
+                Buy Again
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
         {/* Content */}
         {selectedTab === 'orders' ? (
-          // Previous Orders
-          <>
-            {PREVIOUS_ORDERS.map((order) => (
-              <View key={order.id} style={styles.orderCard}>
-                <View style={styles.orderHeader}>
-                  <View>
-                    <Text variant="bodySmall" weight="semibold">{order.date}</Text>
-                    <Text style={styles.orderStatus}>{order.status}</Text>
-                  </View>
-                  <Text variant="body" weight="bold">${order.total.toFixed(2)}</Text>
+          // Compact Order Cards
+          <View style={styles.ordersContainer}>
+            {orders.map((order) => (
+              <Pressable
+                key={order.id}
+                style={styles.orderCard}
+                onPress={() => handleOpenOrderDetails(order)}
+              >
+                {/* Left: Product Images Stack */}
+                <View style={styles.orderImagesStack}>
+                  {order.items.slice(0, 3).map((item, index) => (
+                    <View
+                      key={item.productId}
+                      style={[
+                        styles.stackedImage,
+                        {
+                          top: index * 4,
+                          left: index * 4,
+                          zIndex: 3 - index,
+                        }
+                      ]}
+                    >
+                      <Image
+                        source={{ uri: item.image || undefined }}
+                        width={40}
+                        height={40}
+                        borderRadius={6}
+                      />
+                    </View>
+                  ))}
                 </View>
 
-                <View style={styles.orderItems}>
-                  <View style={styles.orderItemsRow}>
-                    {order.items.slice(0, 4).map((item, index) => (
-                      <View key={item.id} style={[styles.orderItemImage, { marginLeft: index > 0 ? -8 : 0, zIndex: 4 - index }]}>
-                        <Image
-                          source={{ uri: item.image }}
-                          width={48}
-                          height={48}
-                          borderRadius={8}
-                        />
-                      </View>
-                    ))}
-                    {order.items.length > 4 && (
-                      <View style={styles.moreItemsBadge}>
-                        <Text style={styles.moreItemsText}>+{order.items.length - 4}</Text>
-                      </View>
-                    )}
+                {/* Middle: Order Info */}
+                <View style={styles.orderInfo}>
+                  <View style={styles.orderTopRow}>
+                    <Text variant="bodySmall" weight="semibold" numberOfLines={1}>
+                      {order.items.map(i => i.title).slice(0, 2).join(', ')}
+                      {order.items.length > 2 ? ` +${order.items.length - 2}` : ''}
+                    </Text>
                   </View>
-                  <Text style={styles.orderItemsCount}>
-                    {order.items.reduce((sum, i) => sum + i.quantity, 0)} items
-                  </Text>
+                  <View style={styles.orderMeta}>
+                    <Text style={styles.orderDate}>{order.date}</Text>
+                    <View style={styles.dot} />
+                    <Text style={styles.orderItemCount}>
+                      {order.items.reduce((sum, i) => sum + i.quantity, 0)} items
+                    </Text>
+                    <View style={styles.dot} />
+                    <Text style={styles.orderTotal}>${order.total.toFixed(2)}</Text>
+                  </View>
                 </View>
 
-                <View style={styles.orderActions}>
-                  <Pressable
-                    style={styles.viewDetailsButton}
-                    onPress={() => router.push('/')}
-                  >
-                    <Text style={styles.viewDetailsText}>View Details</Text>
-                  </Pressable>
-                  <Pressable
-                    style={styles.reorderButton}
-                    onPress={() => handleReorderAll(order)}
-                  >
-                    <Icon name="refresh" size="sm" color={tokens.colors.semantic.surface.primary} />
-                    <Text style={styles.reorderText}>Reorder All</Text>
-                  </Pressable>
+                {/* Right: Chevron Indicator */}
+                <View style={styles.chevronContainer}>
+                  <Icon name="chevron-right" size="sm" color={tokens.colors.semantic.text.tertiary} />
                 </View>
-              </View>
+              </Pressable>
             ))}
-          </>
+          </View>
         ) : (
-          // Frequently Bought Items
-          <View style={styles.frequentGrid}>
-            {FREQUENT_ITEMS.map((item) => (
-              <View key={item.id} style={styles.frequentItemWrapper}>
-                {renderFrequentItem({ item })}
-              </View>
-            ))}
+          // Compact Frequent Items Grid
+          <View style={styles.frequentContainer}>
+            {frequentItems.map((item) => {
+              const cartQty = getItemQuantity(item.productId);
+              return (
+                <View key={item.productId} style={styles.frequentCard}>
+                  <Image
+                    source={{ uri: item.image || undefined }}
+                    width={56}
+                    height={56}
+                    borderRadius={8}
+                  />
+                  <View style={styles.frequentInfo}>
+                    <Text variant="caption" weight="medium" numberOfLines={1} style={styles.frequentTitle}>
+                      {item.title}
+                    </Text>
+                    <Text style={styles.frequentWeight}>Ordered {item.orderCount}x</Text>
+                    <View style={styles.frequentPriceRow}>
+                      <Text style={styles.frequentPrice}>${item.price.toFixed(2)}</Text>
+                    </View>
+                  </View>
+                  {cartQty > 0 ? (
+                    <View style={styles.frequentQuantityControl}>
+                      <Pressable
+                        style={styles.frequentQuantityButton}
+                        onPress={() => handleQuantityChange(item.productId, -1)}
+                      >
+                        <Icon name="minus" size="xs" color={tokens.colors.semantic.surface.primary} />
+                      </Pressable>
+                      <Text style={styles.frequentQuantityText}>{cartQty}</Text>
+                      <Pressable
+                        style={styles.frequentQuantityButton}
+                        onPress={() => handleQuantityChange(item.productId, 1)}
+                      >
+                        <Icon name="plus" size="xs" color={tokens.colors.semantic.surface.primary} />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <Pressable
+                      style={styles.frequentAddButton}
+                      onPress={() => handleAddItem(item)}
+                    >
+                      <Icon name="plus" size="xs" color={tokens.colors.semantic.brand.primary.default} />
+                    </Pressable>
+                  )}
+                </View>
+              );
+            })}
           </View>
         )}
 
         {/* Bottom spacing */}
         <View style={{ height: 100 }} />
       </CollapsibleHeader>
+
+      {/* Order Details Modal */}
+      <Modal
+        visible={selectedOrder !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={handleCloseOrderDetails}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={handleCloseOrderDetails}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[styles.modalContent, { paddingBottom: insets.bottom + 16 }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            {/* Modal Handle */}
+            <View style={styles.modalHandle} />
+
+            {/* Modal Header */}
+            <View style={styles.modalHeader}>
+              <View>
+                <Text variant="h5" weight="semibold">Order Details</Text>
+                <Text style={styles.modalSubtitle}>
+                  {selectedOrder?.date} • ${selectedOrder?.total.toFixed(2)}
+                </Text>
+              </View>
+              <Pressable
+                style={styles.closeButton}
+                onPress={handleCloseOrderDetails}
+              >
+                <Icon name="close" size="sm" color={tokens.colors.semantic.text.secondary} />
+              </Pressable>
+            </View>
+
+            {/* Items List */}
+            <ScrollView
+              style={styles.modalItemsList}
+              showsVerticalScrollIndicator={false}
+            >
+              {selectedOrder?.items.map((item) => {
+                const cartQty = getItemQuantity(item.productId);
+                return (
+                  <View key={item.productId} style={styles.modalItem}>
+                    <Image
+                      source={{ uri: item.image || undefined }}
+                      width={56}
+                      height={56}
+                      borderRadius={8}
+                    />
+                    <View style={styles.modalItemInfo}>
+                      <Text variant="bodySmall" weight="medium" numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                      <View style={styles.modalItemPriceRow}>
+                        <Text style={styles.modalItemPrice}>${item.price.toFixed(2)}</Text>
+                        <Text style={styles.modalItemQty}>Qty: {item.quantity}</Text>
+                      </View>
+                    </View>
+                    {cartQty > 0 ? (
+                      <View style={styles.modalQuantityControl}>
+                        <Pressable
+                          style={styles.modalQuantityButton}
+                          onPress={() => handleQuantityChange(item.productId, -1)}
+                        >
+                          <Icon name="minus" size="xs" color={tokens.colors.semantic.surface.primary} />
+                        </Pressable>
+                        <Text style={styles.modalQuantityText}>{cartQty}</Text>
+                        <Pressable
+                          style={styles.modalQuantityButton}
+                          onPress={() => handleQuantityChange(item.productId, 1)}
+                        >
+                          <Icon name="plus" size="xs" color={tokens.colors.semantic.surface.primary} />
+                        </Pressable>
+                      </View>
+                    ) : (
+                      <Pressable
+                        style={styles.modalAddButton}
+                        onPress={() => handleAddOrderItem(item)}
+                      >
+                        <Icon name="plus" size="xs" color={tokens.colors.semantic.brand.primary.default} />
+                      </Pressable>
+                    )}
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            {/* Add All Button */}
+            <Pressable
+              style={styles.addAllButton}
+              onPress={handleReorderAllFromModal}
+            >
+              <Icon name="refresh" size="sm" color={tokens.colors.semantic.surface.primary} />
+              <Text style={styles.addAllText}>Add All Items</Text>
+            </Pressable>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Floating Cart Button */}
       <FloatingCartButton />
@@ -255,179 +532,227 @@ export default function ReorderScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: tokens.colors.semantic.surface.secondary,
+  },
+  // Sign-in prompt
+  signInHeader: {
+    paddingHorizontal: tokens.spacing[4],
+    paddingBottom: tokens.spacing[3],
+    backgroundColor: tokens.colors.semantic.surface.primary,
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.colors.semantic.border.subtle,
+  },
+  signInHeaderTitle: {
+    textAlign: 'center',
+    color: tokens.colors.semantic.text.primary,
+  },
+  signInContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: tokens.spacing[8],
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: tokens.spacing[4],
+  },
+  loadingText: {
+    color: tokens.colors.semantic.text.secondary,
+    fontSize: 15,
+  },
+  errorContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: tokens.spacing[8],
+  },
+  signInIcon: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: tokens.spacing[6],
+  },
+  signInTitle: {
+    textAlign: 'center',
+    color: tokens.colors.semantic.text.primary,
+    marginBottom: tokens.spacing[2],
+  },
+  signInSubtitle: {
+    textAlign: 'center',
+    color: tokens.colors.semantic.text.secondary,
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: tokens.spacing[6],
+  },
+  signInButton: {
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    paddingVertical: tokens.spacing[4],
+    paddingHorizontal: tokens.spacing[6],
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: tokens.spacing[3],
+  },
+  signInButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  browseButton: {
+    paddingVertical: tokens.spacing[3],
+    paddingHorizontal: tokens.spacing[6],
+  },
+  browseButtonText: {
+    color: tokens.colors.semantic.brand.primary.default,
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  // Tabs
+  tabsWrapper: {
+    paddingHorizontal: tokens.spacing[4],
+    paddingBottom: tokens.spacing[3],
   },
   tabsContainer: {
     flexDirection: 'row',
-    paddingHorizontal: tokens.spacing[4],
-    paddingBottom: tokens.spacing[3],
-    gap: tokens.spacing[2],
+    backgroundColor: tokens.colors.semantic.surface.primary,
+    borderRadius: 10,
+    padding: 4,
   },
   tab: {
     flex: 1,
-    paddingVertical: tokens.spacing[3],
-    borderRadius: 8,
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: tokens.colors.semantic.surface.primary,
+    justifyContent: 'center',
+    paddingVertical: tokens.spacing[2],
+    borderRadius: 8,
+    gap: 6,
   },
   tabSelected: {
-    backgroundColor: tokens.colors.semantic.status.success.default,
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '600',
     color: tokens.colors.semantic.text.secondary,
   },
   tabTextSelected: {
     color: tokens.colors.semantic.surface.primary,
   },
+  // Orders
+  ordersContainer: {
+    paddingHorizontal: tokens.spacing[4],
+    gap: tokens.spacing[2],
+  },
   orderCard: {
-    marginHorizontal: tokens.spacing[4],
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: tokens.colors.semantic.surface.primary,
     borderRadius: 12,
-    padding: tokens.spacing[4],
-    marginBottom: tokens.spacing[3],
+    padding: tokens.spacing[3],
+    gap: tokens.spacing[3],
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+    } : {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.08,
+      shadowRadius: 3,
+      elevation: 2,
+    }),
   },
-  orderHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: tokens.spacing[3],
+  orderImagesStack: {
+    width: 52,
+    height: 52,
+    position: 'relative',
   },
-  orderStatus: {
-    fontSize: 13,
-    color: tokens.colors.semantic.status.success.default,
-    marginTop: 2,
-  },
-  orderItems: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: tokens.spacing[3],
-    borderTopWidth: 1,
-    borderTopColor: tokens.colors.semantic.border.subtle,
-    borderBottomWidth: 1,
-    borderBottomColor: tokens.colors.semantic.border.subtle,
-  },
-  orderItemsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  orderItemImage: {
+  stackedImage: {
+    position: 'absolute',
     borderWidth: 2,
     borderColor: tokens.colors.semantic.surface.primary,
     borderRadius: 8,
     overflow: 'hidden',
   },
-  moreItemsBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: tokens.colors.semantic.surface.secondary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: -8,
-  },
-  moreItemsText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: tokens.colors.semantic.text.secondary,
-  },
-  orderItemsCount: {
-    fontSize: 13,
-    color: tokens.colors.semantic.text.secondary,
-  },
-  orderActions: {
-    flexDirection: 'row',
-    gap: tokens.spacing[3],
-    marginTop: tokens.spacing[3],
-  },
-  viewDetailsButton: {
+  orderInfo: {
     flex: 1,
-    paddingVertical: tokens.spacing[3],
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: tokens.colors.semantic.border.default,
+    gap: 4,
   },
-  viewDetailsText: {
-    fontSize: 14,
-    fontWeight: '500',
+  orderTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  orderMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  orderDate: {
+    fontSize: 12,
+    color: tokens.colors.semantic.text.tertiary,
+  },
+  dot: {
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: tokens.colors.semantic.text.tertiary,
+  },
+  orderItemCount: {
+    fontSize: 12,
+    color: tokens.colors.semantic.text.tertiary,
+  },
+  orderTotal: {
+    fontSize: 12,
+    fontWeight: '600',
     color: tokens.colors.semantic.text.primary,
   },
-  reorderButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: tokens.spacing[3],
-    borderRadius: 8,
-    backgroundColor: tokens.colors.semantic.status.success.default,
+  chevronContainer: {
+    padding: tokens.spacing[1],
+  },
+  // Frequent Items
+  frequentContainer: {
+    paddingHorizontal: tokens.spacing[4],
     gap: tokens.spacing[2],
   },
-  reorderText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: tokens.colors.semantic.surface.primary,
-  },
-  frequentGrid: {
+  frequentCard: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: tokens.spacing[3],
-  },
-  frequentItemWrapper: {
-    width: '48%',
-  },
-  frequentItemCard: {
+    alignItems: 'center',
     backgroundColor: tokens.colors.semantic.surface.primary,
     borderRadius: 12,
-    overflow: 'hidden',
-  },
-  frequentItemImageContainer: {
-    position: 'relative',
-  },
-  frequentAddButton: {
-    position: 'absolute',
-    bottom: -12,
-    left: tokens.spacing[3],
-    right: tokens.spacing[3],
-    backgroundColor: tokens.colors.semantic.surface.primary,
-    borderWidth: 1,
-    borderColor: tokens.colors.semantic.status.success.default,
-    borderRadius: 6,
-    paddingVertical: tokens.spacing[1],
-    alignItems: 'center',
-  },
-  frequentAddText: {
-    color: tokens.colors.semantic.status.success.default,
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  frequentItemInfo: {
     padding: tokens.spacing[3],
-    paddingTop: tokens.spacing[4],
+    gap: tokens.spacing[3],
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+    } : {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.08,
+      shadowRadius: 3,
+      elevation: 2,
+    }),
   },
-  frequentItemWeight: {
+  frequentInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  frequentTitle: {
+    lineHeight: 18,
+  },
+  frequentWeight: {
     fontSize: 11,
     color: tokens.colors.semantic.text.tertiary,
-    marginBottom: 2,
-  },
-  frequentItemTitle: {
-    marginBottom: tokens.spacing[1],
-    lineHeight: 16,
-  },
-  frequentOrderCount: {
-    fontSize: 11,
-    color: tokens.colors.semantic.text.secondary,
-    marginBottom: tokens.spacing[1],
   },
   frequentPriceRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: tokens.spacing[1],
+    marginTop: 2,
   },
   frequentPrice: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     color: tokens.colors.semantic.text.primary,
   },
   frequentOriginalPrice: {
@@ -435,17 +760,47 @@ const styles = StyleSheet.create({
     color: tokens.colors.semantic.text.tertiary,
     textDecorationLine: 'line-through',
   },
+  frequentAddButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: tokens.colors.semantic.brand.primary.subtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  frequentQuantityControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  frequentQuantityButton: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  frequentQuantityText: {
+    color: tokens.colors.semantic.surface.primary,
+    fontWeight: '600',
+    fontSize: 13,
+    minWidth: 20,
+    textAlign: 'center',
+  },
   // Empty state
   emptyContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: tokens.spacing[6],
+    paddingTop: tokens.spacing[12],
   },
   emptyIconContainer: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: tokens.colors.semantic.surface.tertiary,
     alignItems: 'center',
     justifyContent: 'center',
@@ -458,17 +813,140 @@ const styles = StyleSheet.create({
   emptySubtitle: {
     textAlign: 'center',
     color: tokens.colors.semantic.text.secondary,
-    marginBottom: tokens.spacing[6],
+    fontSize: 14,
+    marginBottom: tokens.spacing[5],
   },
   shopNowButton: {
-    backgroundColor: tokens.colors.semantic.status.success.default,
-    paddingVertical: tokens.spacing[4],
-    paddingHorizontal: tokens.spacing[6],
-    borderRadius: 12,
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    paddingVertical: tokens.spacing[3],
+    paddingHorizontal: tokens.spacing[5],
+    borderRadius: 10,
   },
   shopNowText: {
     color: tokens.colors.semantic.surface.primary,
-    fontSize: 16,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: tokens.colors.semantic.surface.primary,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingHorizontal: tokens.spacing[4],
+    paddingTop: tokens.spacing[2],
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: tokens.colors.semantic.border.default,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: tokens.spacing[3],
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: tokens.spacing[4],
+    paddingBottom: tokens.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.colors.semantic.border.subtle,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: tokens.colors.semantic.text.tertiary,
+    marginTop: 2,
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: tokens.colors.semantic.surface.tertiary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalItemsList: {
+    maxHeight: 350,
+  },
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: tokens.spacing[3],
+    borderBottomWidth: 1,
+    borderBottomColor: tokens.colors.semantic.border.subtle,
+    gap: tokens.spacing[3],
+  },
+  modalItemInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  modalItemWeight: {
+    fontSize: 11,
+    color: tokens.colors.semantic.text.tertiary,
+  },
+  modalItemPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: tokens.spacing[1],
+    marginTop: 2,
+  },
+  modalItemPrice: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: tokens.colors.semantic.text.primary,
+  },
+  modalItemQty: {
+    fontSize: 12,
+    color: tokens.colors.semantic.text.tertiary,
+  },
+  modalAddButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: tokens.colors.semantic.brand.primary.subtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalQuantityControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    borderRadius: 18,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  modalQuantityButton: {
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalQuantityText: {
+    color: tokens.colors.semantic.surface.primary,
+    fontWeight: '600',
+    fontSize: 14,
+    minWidth: 24,
+    textAlign: 'center',
+  },
+  addAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    paddingVertical: tokens.spacing[4],
+    borderRadius: 12,
+    marginTop: tokens.spacing[4],
+    gap: tokens.spacing[2],
+  },
+  addAllText: {
+    color: tokens.colors.semantic.surface.primary,
+    fontSize: 15,
     fontWeight: '600',
   },
 });

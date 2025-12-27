@@ -1,45 +1,76 @@
-import { ScrollView, StyleSheet, View, Pressable, TextInput, Platform, KeyboardAvoidingView } from 'react-native';
-import { useState } from 'react';
+import { ScrollView, StyleSheet, View, Pressable, TextInput, Platform, KeyboardAvoidingView, ActivityIndicator, Alert } from 'react-native';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Icon, Image } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
-
-// Mock user data
-const INITIAL_USER_DATA = {
-  name: 'Sarah Johnson',
-  email: 'sarah.johnson@email.com',
-  phone: '+1 (415) 555-0123',
-  avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop',
-};
+import { useAppAuth } from '@/contexts/auth-context';
+import { updateProfile } from 'firebase/auth';
+import { auth } from '@/lib/firebase';
 
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { user, firebaseUser, isLoading } = useAppAuth();
 
-  const [name, setName] = useState(INITIAL_USER_DATA.name);
-  const [email, setEmail] = useState(INITIAL_USER_DATA.email);
-  const [phone, setPhone] = useState(INITIAL_USER_DATA.phone);
-  const [isEditing, setIsEditing] = useState(false);
+  // Form state initialized from Firebase user
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const hasChanges = name !== INITIAL_USER_DATA.name ||
-    email !== INITIAL_USER_DATA.email ||
-    phone !== INITIAL_USER_DATA.phone;
+  // Initialize form values when user loads
+  useEffect(() => {
+    if (user) {
+      setFirstName(user.firstName || '');
+      setLastName(user.lastName || '');
+    }
+  }, [user]);
+
+  // Check if form has changes
+  const hasChanges = user && (
+    firstName !== (user.firstName || '') ||
+    lastName !== (user.lastName || '')
+  );
 
   const handleBack = () => {
     router.back();
   };
 
   const handleSave = async () => {
+    if (!firebaseUser) return;
+
     setIsSaving(true);
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setIsSaving(false);
-    setIsEditing(false);
-    // In a real app, this would update the user data
-    router.back();
+    try {
+      // Update Firebase display name
+      const displayName = `${firstName} ${lastName}`.trim();
+      await updateProfile(firebaseUser, { displayName });
+      router.back();
+    } catch (err) {
+      console.error('[Profile] Update error:', err);
+      Alert.alert('Error', 'Failed to update profile. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
   };
+
+  // Show loading while auth is loading
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+      </View>
+    );
+  }
+
+  if (!user) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <Text variant="body" style={{ color: tokens.colors.semantic.text.secondary }}>
+          Please sign in to view your profile
+        </Text>
+      </View>
+    );
+  }
 
   const handleChangeAvatar = () => {
     // In a real app, this would open image picker
@@ -69,12 +100,20 @@ export default function ProfileScreen() {
         {/* Avatar Section */}
         <View style={styles.avatarSection}>
           <View style={styles.avatarContainer}>
-            <Image
-              source={{ uri: INITIAL_USER_DATA.avatar }}
-              width={100}
-              height={100}
-              borderRadius={50}
-            />
+            {user.imageUrl ? (
+              <Image
+                source={{ uri: user.imageUrl }}
+                width={100}
+                height={100}
+                borderRadius={50}
+              />
+            ) : (
+              <View style={styles.avatarPlaceholder}>
+                <Text style={styles.avatarInitials}>
+                  {(firstName?.[0] || '').toUpperCase()}{(lastName?.[0] || '').toUpperCase()}
+                </Text>
+              </View>
+            )}
             <Pressable style={styles.changeAvatarButton} onPress={handleChangeAvatar}>
               <Icon name="camera" size="sm" color={tokens.colors.semantic.surface.primary} />
             </Pressable>
@@ -87,12 +126,24 @@ export default function ProfileScreen() {
         {/* Form Fields */}
         <View style={styles.formSection}>
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Full Name</Text>
+            <Text style={styles.inputLabel}>First Name</Text>
             <TextInput
               style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="Enter your name"
+              value={firstName}
+              onChangeText={setFirstName}
+              placeholder="Enter your first name"
+              placeholderTextColor={tokens.colors.semantic.text.tertiary}
+              autoCapitalize="words"
+            />
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Last Name</Text>
+            <TextInput
+              style={styles.input}
+              value={lastName}
+              onChangeText={setLastName}
+              placeholder="Enter your last name"
               placeholderTextColor={tokens.colors.semantic.text.tertiary}
               autoCapitalize="words"
             />
@@ -100,28 +151,12 @@ export default function ProfileScreen() {
 
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>Email Address</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Enter your email"
-              placeholderTextColor={tokens.colors.semantic.text.tertiary}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Phone Number</Text>
-            <TextInput
-              style={styles.input}
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="Enter your phone number"
-              placeholderTextColor={tokens.colors.semantic.text.tertiary}
-              keyboardType="phone-pad"
-            />
+            <View style={[styles.input, styles.readOnlyInput]}>
+              <Text style={styles.readOnlyText}>
+                {user.email || 'No email'}
+              </Text>
+            </View>
+            <Text style={styles.inputHint}>Email cannot be changed here</Text>
           </View>
         </View>
 
@@ -161,6 +196,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: tokens.colors.semantic.surface.secondary,
   },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -199,6 +238,19 @@ const styles = StyleSheet.create({
   avatarContainer: {
     position: 'relative',
     marginBottom: tokens.spacing[3],
+  },
+  avatarPlaceholder: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitials: {
+    fontSize: 32,
+    fontWeight: '600',
+    color: tokens.colors.semantic.surface.primary,
   },
   changeAvatarButton: {
     position: 'absolute',
@@ -242,6 +294,18 @@ const styles = StyleSheet.create({
     color: tokens.colors.semantic.text.primary,
     borderWidth: 1,
     borderColor: tokens.colors.semantic.border.subtle,
+  },
+  readOnlyInput: {
+    backgroundColor: tokens.colors.semantic.surface.tertiary,
+  },
+  readOnlyText: {
+    fontSize: 16,
+    color: tokens.colors.semantic.text.secondary,
+  },
+  inputHint: {
+    fontSize: 12,
+    color: tokens.colors.semantic.text.tertiary,
+    marginTop: tokens.spacing[1],
   },
   // Danger Section
   dangerSection: {

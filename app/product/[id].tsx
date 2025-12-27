@@ -6,34 +6,133 @@ import {
   Platform,
   Dimensions,
   FlatList,
+  ActivityIndicator,
 } from 'react-native';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Icon, Image } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
+import { useProduct } from '@/hooks/use-api';
+import { useCart } from '@/contexts/cart-context';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-// Sample product data (would come from API/props in real app)
-const SAMPLE_PRODUCT = {
+// Default placeholder image
+const PLACEHOLDER_IMAGE = 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=600&h=600&fit=crop';
+
+// Transform API product to display format
+function transformApiProduct(apiProduct: any): DisplayProduct {
+  const images = apiProduct.images?.length > 0
+    ? apiProduct.images
+        .sort((a: any, b: any) => a.sortOrder - b.sortOrder)
+        .map((img: any) => img.cdnUrl || img.url)
+    : apiProduct.imageUrl
+      ? [apiProduct.imageUrl]
+      : [PLACEHOLDER_IMAGE];
+
+  const price = Number(apiProduct.price) || 0;
+  const compareAtPrice = apiProduct.compareAtPrice ? Number(apiProduct.compareAtPrice) : null;
+  const discount = compareAtPrice && compareAtPrice > price
+    ? Math.round((1 - price / compareAtPrice) * 100)
+    : 0;
+
+  // Check dietary tags for vegetarian
+  const isVegetarian = apiProduct.dietaryTags?.some((tag: string) =>
+    tag.toLowerCase().includes('vegan') || tag.toLowerCase().includes('vegetarian')
+  ) ?? false;
+
+  return {
+    id: apiProduct.id,
+    title: apiProduct.name,
+    subtitle: apiProduct.shortDescription || apiProduct.brand?.name || '',
+    images,
+    deliveryTime: '2 hours', // Static for now
+    rating: 4.5, // Not in API yet
+    reviewCount: 0, // Not in API yet
+    isSponsored: false,
+    isVegetarian,
+    variants: [
+      {
+        id: '1',
+        weight: apiProduct.unitSize || apiProduct.unit || '1 unit',
+        price,
+        originalPrice: compareAtPrice || undefined,
+        discount,
+      },
+    ],
+    highlights: {
+      sourced: 'Fresh Daily',
+      quality: 'Assured',
+      replacement: '48 hours',
+      support: '24/7',
+    },
+    details: {
+      unit: apiProduct.unitSize || apiProduct.unit || '1 unit',
+      description: apiProduct.description || 'No description available.',
+      healthBenefits: 'Healthy & Nutritious',
+    },
+    info: {
+      shelfLife: '5-7 days',
+      returnPolicy: 'The product is non-returnable. For a damaged, rotten or incorrect item, you can request a replacement within 48 hours of delivery.',
+      countryOfOrigin: 'USA',
+      customerCare: 'Email: support@thriptify.com',
+      disclaimer: 'Every effort is made to maintain the accuracy of all information. However, actual product packaging and materials may contain more and/or different information.',
+    },
+  };
+}
+
+// Display product type
+interface DisplayProduct {
+  id: string;
+  title: string;
+  subtitle: string;
+  images: string[];
+  deliveryTime: string;
+  rating: number;
+  reviewCount: number;
+  isSponsored: boolean;
+  isVegetarian: boolean;
+  variants: Array<{
+    id: string;
+    weight: string;
+    price: number;
+    originalPrice?: number;
+    discount: number;
+  }>;
+  highlights: {
+    sourced: string;
+    quality: string;
+    replacement: string;
+    support: string;
+  };
+  details: {
+    unit: string;
+    description: string;
+    healthBenefits: string;
+  };
+  info: {
+    shelfLife: string;
+    returnPolicy: string;
+    countryOfOrigin: string;
+    customerCare: string;
+    disclaimer: string;
+  };
+}
+
+// Fallback product data when API fails
+const FALLBACK_PRODUCT: DisplayProduct = {
   id: '1',
-  title: 'Organic Red Onion',
-  subtitle: 'Fresh & Locally Sourced',
-  images: [
-    'https://images.unsplash.com/photo-1618512496248-a07fe83aa8cb?w=600&h=600&fit=crop',
-    'https://images.unsplash.com/photo-1580201092675-a0a6a6cafbb1?w=600&h=600&fit=crop',
-    'https://images.unsplash.com/photo-1508747703725-719571f5c109?w=600&h=600&fit=crop',
-    'https://images.unsplash.com/photo-1587049633312-d628ae50a8ae?w=600&h=600&fit=crop',
-  ],
+  title: 'Product Not Found',
+  subtitle: '',
+  images: [PLACEHOLDER_IMAGE],
   deliveryTime: '2 hours',
-  rating: 4.5,
-  reviewCount: 25948,
+  rating: 0,
+  reviewCount: 0,
   isSponsored: false,
   isVegetarian: true,
   variants: [
-    { id: '1', weight: '0.95 - 1.05 lb', price: 2.49, originalPrice: 3.29, discount: 24 },
-    { id: '2', weight: '2 x (0.95-1.05) lb', price: 4.79, originalPrice: 6.58, discount: 27 },
+    { id: '1', weight: '1 unit', price: 0, discount: 0 },
   ],
   highlights: {
     sourced: 'Fresh Daily',
@@ -42,16 +141,16 @@ const SAMPLE_PRODUCT = {
     support: '24/7',
   },
   details: {
-    unit: '0.95 - 1.05 lb',
-    description: 'Organic red onions are a staple in American kitchens and are commonly chopped and used as an ingredient in various hearty warm dishes. They are versatile and can be baked, boiled, braised, grilled, fried, roasted, sauteed, or eaten raw in salads.',
-    healthBenefits: 'Enhances Skin & Hair Health',
+    unit: '1 unit',
+    description: 'Product information unavailable.',
+    healthBenefits: '-',
   },
   info: {
-    shelfLife: '5-7 days',
-    returnPolicy: 'The product is non-returnable. For a damaged, rotten or incorrect item, you can request a replacement within 48 hours of delivery. In case of an incorrect item, you may raise a replacement or return request only if the item is sealed/unopened/unused and in original condition.',
-    countryOfOrigin: 'USA',
+    shelfLife: '-',
+    returnPolicy: '-',
+    countryOfOrigin: '-',
     customerCare: 'Email: support@thriptify.com',
-    disclaimer: 'Every effort is made to maintain the accuracy of all information. However, actual product packaging and materials may contain more and/or different information. It is recommended not to solely rely on the information provided.',
+    disclaimer: '-',
   },
 };
 
@@ -157,9 +256,21 @@ export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList>(null);
+  const { addItem, updateQuantity, items } = useCart();
+
+  // Fetch product from API
+  const { data: apiProduct, isLoading, error } = useProduct(id);
+
+  // Transform API product to display format
+  const product: DisplayProduct = useMemo(() => {
+    if (apiProduct) {
+      return transformApiProduct(apiProduct);
+    }
+    return FALLBACK_PRODUCT;
+  }, [apiProduct]);
 
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [selectedVariant, setSelectedVariant] = useState(SAMPLE_PRODUCT.variants[0]);
+  const [selectedVariant, setSelectedVariant] = useState(product.variants[0]);
   const [isFavorite, setIsFavorite] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     highlights: true,
@@ -168,7 +279,16 @@ export default function ProductDetailScreen() {
   const [favorites, setFavorites] = useState<Record<string, boolean>>({});
   const [quantities, setQuantities] = useState<Record<string, number>>({});
 
-  const product = SAMPLE_PRODUCT; // In real app, fetch based on id
+  // Update selected variant when product changes
+  useEffect(() => {
+    if (product.variants.length > 0) {
+      setSelectedVariant(product.variants[0]);
+    }
+  }, [product]);
+
+  // Get quantity from cart
+  const cartItem = items.find(item => item.id === product.id);
+  const cartQuantity = cartItem?.quantity || 0;
 
   const handleBack = () => {
     router.back();
@@ -198,17 +318,28 @@ export default function ProductDetailScreen() {
   };
 
   const handleAddToCart = () => {
-    setQuantities(prev => ({
-      ...prev,
-      [product.id]: (prev[product.id] || 0) + 1,
-    }));
+    // Add to cart context - match CartItem interface
+    addItem({
+      id: product.id,
+      title: product.title,
+      price: selectedVariant.price,
+      image: product.images[0],
+      weight: selectedVariant.weight,
+    });
   };
 
   const handleQuantityChange = (productId: string, delta: number) => {
-    setQuantities(prev => {
-      const newQty = Math.max(0, (prev[productId] || 0) + delta);
-      return { ...prev, [productId]: newQty };
-    });
+    if (productId === product.id) {
+      // Use cart context for main product
+      const newQty = Math.max(0, cartQuantity + delta);
+      updateQuantity(product.id, newQty);
+    } else {
+      // Use local state for related products (they'll add to cart on tap)
+      setQuantities(prev => {
+        const newQty = Math.max(0, (prev[productId] || 0) + delta);
+        return { ...prev, [productId]: newQty };
+      });
+    }
   };
 
   const handleRelatedProductAdd = (productId: string) => {
@@ -355,7 +486,36 @@ export default function ProductDetailScreen() {
     </Pressable>
   );
 
-  const quantity = quantities[product.id] || 0;
+  const quantity = cartQuantity; // Use cart quantity for bottom bar
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+        <Text style={styles.loadingText}>Loading product...</Text>
+      </View>
+    );
+  }
+
+  // Error state
+  if (error && !apiProduct) {
+    return (
+      <View style={[styles.container, styles.errorContainer]}>
+        <View style={[styles.headerOverlay, { paddingTop: insets.top + tokens.spacing[2] }]}>
+          <Pressable style={styles.headerButton} onPress={handleBack}>
+            <Icon name="chevron-down" size="md" color={tokens.colors.semantic.text.primary} />
+          </Pressable>
+        </View>
+        <Icon name="alert-circle" size="xl" color={tokens.colors.semantic.status.error.default} />
+        <Text variant="h4" weight="semibold" style={styles.errorTitle}>Product Not Found</Text>
+        <Text style={styles.errorText}>Unable to load product details. Please try again.</Text>
+        <Pressable style={styles.retryButton} onPress={handleBack}>
+          <Text style={styles.retryButtonText}>Go Back</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -423,7 +583,7 @@ export default function ProductDetailScreen() {
         {/* Product Info Section */}
         <View style={styles.productInfoSection}>
           {/* Rating and reviews */}
-          {product.rating && (
+          {product.rating > 0 && product.reviewCount > 0 && (
             <View style={styles.ratingRow}>
               <Icon name="star-fill" size="xs" color="#FFB800" />
               <Icon name="star-fill" size="xs" color="#FFB800" />
@@ -708,6 +868,41 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tokens.colors.semantic.surface.primary,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: tokens.spacing[3],
+    color: tokens.colors.semantic.text.secondary,
+    fontSize: tokens.typography.fontSize.sm,
+  },
+  errorContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: tokens.spacing[6],
+  },
+  errorTitle: {
+    marginTop: tokens.spacing[4],
+    marginBottom: tokens.spacing[2],
+    textAlign: 'center',
+  },
+  errorText: {
+    color: tokens.colors.semantic.text.secondary,
+    fontSize: tokens.typography.fontSize.sm,
+    textAlign: 'center',
+    marginBottom: tokens.spacing[4],
+  },
+  retryButton: {
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    paddingVertical: tokens.spacing[3],
+    paddingHorizontal: tokens.spacing[6],
+    borderRadius: tokens.radius.lg,
+  },
+  retryButtonText: {
+    color: tokens.colors.semantic.text.inverse,
+    fontWeight: String(tokens.typography.fontWeight.semibold) as '600',
   },
   scrollView: {
     flex: 1,

@@ -1,4 +1,5 @@
 import { StyleSheet, Text, type TextProps } from 'react-native';
+import { tokens } from '@thriptify/tokens/react-native';
 
 import { useThemeColor } from '@/hooks/use-theme-color';
 
@@ -35,26 +36,26 @@ export function ThemedText({
 
 const styles = StyleSheet.create({
   default: {
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: tokens.typography.fontSize.base,
+    lineHeight: tokens.typography.fontSize.base * tokens.typography.lineHeight.normal,
   },
   defaultSemiBold: {
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: '600',
+    fontSize: tokens.typography.fontSize.base,
+    lineHeight: tokens.typography.fontSize.base * tokens.typography.lineHeight.normal,
+    fontWeight: String(tokens.typography.fontWeight.semibold) as '600',
   },
   title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    lineHeight: 32,
+    fontSize: tokens.typography.fontSize['4xl'],
+    fontWeight: String(tokens.typography.fontWeight.bold) as 'bold',
+    lineHeight: tokens.typography.fontSize['4xl'],
   },
   subtitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: tokens.typography.fontSize.xl,
+    fontWeight: String(tokens.typography.fontWeight.bold) as 'bold',
   },
   link: {
-    lineHeight: 30,
-    fontSize: 16,
-    color: '#0a7ea4',
+    lineHeight: tokens.typography.fontSize.xl * tokens.typography.lineHeight.normal,
+    fontSize: tokens.typography.fontSize.base,
+    color: tokens.colors.semantic.text.link,
   },
 });

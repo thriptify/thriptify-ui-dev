@@ -1,12 +1,8 @@
-import React, { useRef, useState, useEffect } from 'react';
-import {
-  View,
-  ScrollView,
-  Pressable,
-  StyleSheet,
-} from 'react-native';
+import React from 'react';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { Text, Image, Icon } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
+import { SectionHeader, HorizontalCarousel, PriceDisplay, badgeStyles } from '../shared';
 
 export interface DealItem {
   id: string;
@@ -32,26 +28,12 @@ export function DealCarousel({
 }: DealCarouselProps) {
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.titleRow}>
-          <Icon name="flash" size="md" color={tokens.colors.semantic.status.warning.default} />
-          <Text variant="h3" style={styles.title}>{title}</Text>
-        </View>
-        {onSeeAll && (
-          <Pressable style={styles.seeAllButton} onPress={onSeeAll}>
-            <Text style={styles.seeAllText}>See all</Text>
-            <Icon name="chevron-right" size="sm" color={tokens.colors.semantic.brand.primary.default} />
-          </Pressable>
-        )}
-      </View>
-
-      {/* Deals Scroll */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
+      <SectionHeader
+        title={title}
+        onSeeAll={onSeeAll}
+        leftIcon={{ name: 'flash', color: tokens.colors.semantic.status.warning.default }}
+      />
+      <HorizontalCarousel>
         {items.map((item) => (
           <Pressable
             key={item.id}
@@ -78,12 +60,13 @@ export function DealCarousel({
               <Text variant="caption" numberOfLines={2} style={styles.dealTitle}>
                 {item.title}
               </Text>
-              <View style={styles.priceRow}>
-                <Text style={styles.salePrice}>${item.salePrice.toFixed(2)}</Text>
-                <Text style={styles.originalPrice}>${item.originalPrice.toFixed(2)}</Text>
-              </View>
+              <PriceDisplay
+                price={item.salePrice}
+                originalPrice={item.originalPrice}
+                variant="sale"
+              />
               {item.endsIn && (
-                <View style={styles.timerRow}>
+                <View style={badgeStyles.iconTextRow}>
                   <Icon name="time" size="xs" color={tokens.colors.semantic.status.error.default} />
                   <Text style={styles.timerText}>{item.endsIn}</Text>
                 </View>
@@ -91,7 +74,7 @@ export function DealCarousel({
             </View>
           </Pressable>
         ))}
-      </ScrollView>
+      </HorizontalCarousel>
     </View>
   );
 }
@@ -100,39 +83,10 @@ const styles = StyleSheet.create({
   container: {
     marginBottom: tokens.spacing[4],
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: tokens.spacing[4],
-    marginBottom: tokens.spacing[3],
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[2],
-  },
-  title: {
-    color: tokens.colors.semantic.text.primary,
-  },
-  seeAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[1],
-  },
-  seeAllText: {
-    color: tokens.colors.semantic.brand.primary.default,
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  scrollContent: {
-    paddingHorizontal: tokens.spacing[4],
-    gap: tokens.spacing[3],
-  },
   dealCard: {
     width: 140,
     backgroundColor: tokens.colors.semantic.surface.primary,
-    borderRadius: 12,
+    borderRadius: tokens.radius.xl,
     padding: tokens.spacing[2],
     position: 'relative',
   },
@@ -143,13 +97,13 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.colors.semantic.status.error.default,
     paddingHorizontal: tokens.spacing[2],
     paddingVertical: 2,
-    borderRadius: 4,
+    borderRadius: tokens.radius.sm,
     zIndex: 1,
   },
   discountText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
+    color: tokens.colors.semantic.text.inverse,
+    fontSize: tokens.typography.fontSize.xs - 1,
+    fontWeight: String(tokens.typography.fontWeight.bold) as '700',
   },
   imageContainer: {
     alignItems: 'center',
@@ -160,32 +114,12 @@ const styles = StyleSheet.create({
   },
   dealTitle: {
     color: tokens.colors.semantic.text.primary,
-    fontWeight: '500',
-    lineHeight: 16,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[2],
-  },
-  salePrice: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: tokens.colors.semantic.status.success.default,
-  },
-  originalPrice: {
-    fontSize: 12,
-    color: tokens.colors.semantic.text.tertiary,
-    textDecorationLine: 'line-through',
-  },
-  timerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[1],
+    fontWeight: String(tokens.typography.fontWeight.medium) as '500',
+    lineHeight: tokens.typography.fontSize.base,
   },
   timerText: {
-    fontSize: 11,
+    fontSize: tokens.typography.fontSize.xs - 1,
     color: tokens.colors.semantic.status.error.default,
-    fontWeight: '500',
+    fontWeight: String(tokens.typography.fontWeight.medium) as '500',
   },
 });

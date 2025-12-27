@@ -1,11 +1,13 @@
-import { ScrollView, StyleSheet, View, Pressable, Platform } from 'react-native';
-import { useState } from 'react';
+import { ScrollView, StyleSheet, View, Pressable, ActivityIndicator } from 'react-native';
+import { useState, useEffect } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Icon, Image } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
 import { useCart } from '@/contexts/cart-context';
 import { FloatingCartButton } from '@/components/floating-cart-button';
+import { QuantityStepper } from '@/components/shared/QuantityStepper';
+import { useRecipe, useShoppableRecipe } from '@/hooks/use-api';
 
 // Mock recipe data - in real app, fetch by ID
 const RECIPE_DATA: Record<string, {
@@ -20,12 +22,14 @@ const RECIPE_DATA: Record<string, {
   description: string;
   ingredients: Array<{
     id: string;
+    productId?: string;
     name: string;
     quantity: string;
     image: string;
     price: number;
     originalPrice?: number;
     inStock: boolean;
+    hasProduct?: boolean;
   }>;
   instructions: Array<{
     step: number;
@@ -38,6 +42,7 @@ const RECIPE_DATA: Record<string, {
     carbs: string;
     fat: string;
   };
+  shoppableSummary?: null;
 }> = {
   'rec-1': {
     id: 'rec-1',
@@ -119,7 +124,7 @@ const DEFAULT_RECIPE = {
   tags: ['Main Course'],
   description: 'A delicious recipe to try at home.',
   ingredients: [
-    { id: 'ing-1', name: 'Fresh Ingredients', quantity: 'As needed', image: 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=200&h=200&fit=crop', price: 9.99, inStock: true },
+    { id: 'ing-1', productId: 'ing-1', name: 'Fresh Ingredients', quantity: 'As needed', image: 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=200&h=200&fit=crop', price: 9.99, inStock: true, hasProduct: false },
   ],
   instructions: [
     { step: 1, text: 'Prepare all your ingredients.' },
@@ -132,6 +137,7 @@ const DEFAULT_RECIPE = {
     carbs: '40g',
     fat: '15g',
   },
+  shoppableSummary: null,
 };
 
 // Similar recipes
@@ -168,47 +174,165 @@ export default function RecipeDetailScreen() {
   const insets = useSafeAreaInsets();
   const { addItem } = useCart();
 
-  const recipe = RECIPE_DATA[id || ''] || DEFAULT_RECIPE;
+  // Fetch basic recipe from API (for description, steps, nutrition, etc.)
+  const { data: apiRecipe, isLoading: isRecipeLoading, error } = useRecipe(id);
+
+  // Fetch shoppable recipe for ingredient product data
+  const { data: shoppableRecipe, isLoading: isShoppableLoading } = useShoppableRecipe(id);
+
+  const isLoading = isRecipeLoading || isShoppableLoading;
+
+  // Build ingredients list - merge basic recipe with shoppable product data
+  const buildIngredients = () => {
+    // If we have shoppable recipe data, use it for ingredients (has product info)
+    if (shoppableRecipe?.ingredients) {
+      return shoppableRecipe.ingredients.map((ing) => ({
+        id: ing.id,
+        productId: ing.selectedProduct?.id || ing.id, // Use product ID for cart
+        name: ing.name,
+        quantity: `${ing.quantity}${ing.unit ? ' ' + ing.unit : ''}`,
+        image: ing.selectedProduct?.imageUrl || 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=200&h=200&fit=crop',
+        price: ing.selectedProduct?.price || 0,
+        inStock: ing.selectedProduct?.inStock ?? true,
+        preparation: ing.preparation,
+        hasProduct: ing.selectedProduct !== null,
+      }));
+    }
+
+    // Fall back to basic recipe ingredients (no product data)
+    if (apiRecipe?.ingredients) {
+      return apiRecipe.ingredients.map((ing: any) => ({
+        id: ing.id,
+        productId: ing.preferredProductId || ing.id,
+        name: ing.name,
+        quantity: `${ing.quantity}${ing.unit ? ' ' + ing.unit : ''}`,
+        image: ing.preferredProduct?.imageUrl || 'https://images.unsplash.com/photo-1610832958506-aa56368176cf?w=200&h=200&fit=crop',
+        price: ing.preferredProduct?.price || 0,
+        inStock: true,
+        preparation: ing.preparation,
+        hasProduct: !!ing.preferredProduct,
+      }));
+    }
+
+    return DEFAULT_RECIPE.ingredients;
+  };
+
+  // Use API data if available, otherwise fall back to mock data
+  const recipe = apiRecipe ? {
+    id: apiRecipe.id,
+    title: apiRecipe.title,
+    image: apiRecipe.thumbnailUrl || apiRecipe.imageUrl || DEFAULT_RECIPE.image,
+    cookingTime: apiRecipe.totalTime || (apiRecipe.prepTime + apiRecipe.cookTime),
+    servings: apiRecipe.servings,
+    difficulty: (apiRecipe.difficulty?.charAt(0).toUpperCase() + apiRecipe.difficulty?.slice(1)) as 'Easy' | 'Medium' | 'Hard' || 'Medium',
+    isVegetarian: apiRecipe.dietaryTags?.includes('vegetarian') || false,
+    tags: apiRecipe.tags?.map((t: any) => t.name || t) || [],
+    description: apiRecipe.description || '',
+    ingredients: buildIngredients(),
+    instructions: apiRecipe.steps?.map((step: any) => ({
+      step: step.stepNumber,
+      text: step.instruction,
+      tip: step.tip,
+    })) || DEFAULT_RECIPE.instructions,
+    nutrition: {
+      calories: apiRecipe.calories || 0,
+      protein: '-',
+      carbs: '-',
+      fat: '-',
+    },
+    // Add shoppable summary if available
+    shoppableSummary: shoppableRecipe?.summary || null,
+  } : (RECIPE_DATA[id || ''] || DEFAULT_RECIPE);
 
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [expandedSection, setExpandedSection] = useState<'ingredients' | 'instructions' | 'nutrition' | null>('ingredients');
-  const [selectedIngredients, setSelectedIngredients] = useState<Set<string>>(
-    new Set(recipe.ingredients.filter(i => i.inStock).map(i => i.id))
-  );
+  // Track quantity per ingredient (0 = not selected, 1+ = selected with quantity)
+  const [ingredientQuantities, setIngredientQuantities] = useState<Record<string, number>>({});
+
+  // Update selected ingredients when recipe loads (only auto-select items with products)
+  useEffect(() => {
+    if (recipe.ingredients) {
+      const initialQuantities: Record<string, number> = {};
+      recipe.ingredients.forEach(i => {
+        // Auto-select with quantity 1 if in stock and has product
+        initialQuantities[i.id] = (i.inStock && i.hasProduct) ? 1 : 0;
+      });
+      setIngredientQuantities(initialQuantities);
+    }
+  }, [apiRecipe, shoppableRecipe]);
 
   const toggleIngredient = (ingredientId: string) => {
-    setSelectedIngredients(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(ingredientId)) {
-        newSet.delete(ingredientId);
-      } else {
-        newSet.add(ingredientId);
-      }
-      return newSet;
-    });
+    setIngredientQuantities(prev => ({
+      ...prev,
+      [ingredientId]: prev[ingredientId] > 0 ? 0 : 1,
+    }));
+  };
+
+  const incrementQuantity = (ingredientId: string) => {
+    setIngredientQuantities(prev => ({
+      ...prev,
+      [ingredientId]: Math.min((prev[ingredientId] || 0) + 1, 10), // Max 10
+    }));
+  };
+
+  const decrementQuantity = (ingredientId: string) => {
+    setIngredientQuantities(prev => ({
+      ...prev,
+      [ingredientId]: Math.max((prev[ingredientId] || 0) - 1, 0),
+    }));
   };
 
   const addAllToCart = () => {
     recipe.ingredients
-      .filter(ing => selectedIngredients.has(ing.id) && ing.inStock)
+      .filter(ing => (ingredientQuantities[ing.id] || 0) > 0 && ing.inStock && ing.hasProduct)
       .forEach(ing => {
-        addItem({
-          id: ing.id,
-          title: ing.name,
-          image: ing.image,
-          price: ing.price,
-          originalPrice: ing.originalPrice,
-          weight: ing.quantity,
-          isVegetarian: recipe.isVegetarian,
-        });
+        const qty = ingredientQuantities[ing.id] || 1;
+        // Add each item with the specified quantity
+        for (let i = 0; i < qty; i++) {
+          addItem({
+            id: ing.productId || ing.id, // Use product ID for cart
+            title: ing.name,
+            image: ing.image,
+            price: ing.price,
+            originalPrice: 'originalPrice' in ing ? ing.originalPrice : undefined,
+            weight: ing.quantity,
+            isVegetarian: recipe.isVegetarian,
+          });
+        }
       });
   };
 
+  // Calculate total price including quantities
   const selectedIngredientsTotal = recipe.ingredients
-    .filter(ing => selectedIngredients.has(ing.id) && ing.inStock)
-    .reduce((sum, ing) => sum + ing.price, 0);
+    .filter(ing => (ingredientQuantities[ing.id] || 0) > 0 && ing.inStock && ing.hasProduct)
+    .reduce((sum, ing) => sum + (ing.price * (ingredientQuantities[ing.id] || 1)), 0);
 
-  const selectedCount = recipe.ingredients.filter(ing => selectedIngredients.has(ing.id) && ing.inStock).length;
+  // Count total items (sum of all quantities)
+  const selectedItemCount = recipe.ingredients
+    .filter(ing => (ingredientQuantities[ing.id] || 0) > 0 && ing.inStock && ing.hasProduct)
+    .reduce((sum, ing) => sum + (ingredientQuantities[ing.id] || 0), 0);
+
+  // Count unique ingredients selected
+  const selectedIngredientCount = recipe.ingredients.filter(
+    ing => (ingredientQuantities[ing.id] || 0) > 0 && ing.inStock && ing.hasProduct
+  ).length;
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.loadingContainer, { paddingTop: insets.top }]}>
+          <Pressable style={styles.loadingBackButton} onPress={() => router.back()}>
+            <Icon name="chevron-left" size="md" color={tokens.colors.semantic.text.primary} />
+          </Pressable>
+          <View style={styles.loadingContent}>
+            <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+            <Text style={styles.loadingText}>Loading recipe...</Text>
+          </View>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -216,12 +340,11 @@ export default function RecipeDetailScreen() {
       <View style={styles.heroContainer}>
         <Image
           source={{ uri: recipe.image }}
-          width="100%"
-          height={320}
+          style={{ width: '100%', height: 320 }}
         />
         <View style={styles.heroOverlay}>
           <View style={[styles.headerButtons, { paddingTop: insets.top + tokens.spacing[2] }]}>
-            <Pressable style={styles.headerButton} onPress={() => router.push('/recipes')}>
+            <Pressable style={styles.headerButton} onPress={() => router.back()}>
               <Icon name="chevron-left" size="md" color={tokens.colors.semantic.surface.primary} />
             </Pressable>
             <View style={styles.headerRightButtons}>
@@ -306,18 +429,20 @@ export default function RecipeDetailScreen() {
           {expandedSection === 'ingredients' && (
             <View style={styles.ingredientsList}>
               {recipe.ingredients.map((ingredient) => {
-                const isSelected = selectedIngredients.has(ingredient.id);
+                const quantity = ingredientQuantities[ingredient.id] || 0;
+                const isSelected = quantity > 0;
                 const isOutOfStock = !ingredient.inStock;
+                const hasNoProduct = !ingredient.hasProduct;
+                const isDisabled = isOutOfStock || hasNoProduct;
 
                 return (
-                  <Pressable
+                  <View
                     key={ingredient.id}
-                    style={[styles.ingredientItem, isOutOfStock && styles.ingredientItemDisabled]}
-                    onPress={() => !isOutOfStock && toggleIngredient(ingredient.id)}
+                    style={[styles.ingredientItem, isDisabled && styles.ingredientItemDisabled]}
                   >
                     <Pressable
-                      style={[styles.checkbox, isSelected && styles.checkboxSelected, isOutOfStock && styles.checkboxDisabled]}
-                      onPress={() => !isOutOfStock && toggleIngredient(ingredient.id)}
+                      style={[styles.checkbox, isSelected && styles.checkboxSelected, isDisabled && styles.checkboxDisabled]}
+                      onPress={() => !isDisabled && toggleIngredient(ingredient.id)}
                     >
                       {isSelected && <Icon name="check" size="xs" color={tokens.colors.semantic.surface.primary} />}
                     </Pressable>
@@ -327,41 +452,61 @@ export default function RecipeDetailScreen() {
                       width={48}
                       height={48}
                       borderRadius={8}
-                      style={isOutOfStock ? styles.ingredientImageDisabled : undefined}
+                      style={isDisabled ? styles.ingredientImageDisabled : undefined}
                     />
 
                     <View style={styles.ingredientInfo}>
                       <Text
                         variant="bodySmall"
                         weight="medium"
-                        style={[styles.ingredientName, isOutOfStock && styles.textDisabled]}
+                        style={[styles.ingredientName, isDisabled && styles.textDisabled]}
                       >
                         {ingredient.name}
                       </Text>
-                      <Text style={[styles.ingredientQuantity, isOutOfStock && styles.textDisabled]}>
+                      <Text style={[styles.ingredientQuantity, isDisabled && styles.textDisabled]}>
                         {ingredient.quantity}
                       </Text>
-                      {isOutOfStock && (
+                      {isOutOfStock && !hasNoProduct && (
                         <Text style={styles.outOfStockText}>Out of stock</Text>
+                      )}
+                      {hasNoProduct && (
+                        <Text style={styles.noProductText}>Not available in store</Text>
                       )}
                     </View>
 
-                    <View style={styles.ingredientPrice}>
-                      <Text style={[styles.priceText, isOutOfStock && styles.textDisabled]}>
-                        ${ingredient.price.toFixed(2)}
-                      </Text>
-                      {ingredient.originalPrice && !isOutOfStock && (
-                        <Text style={styles.originalPriceText}>${ingredient.originalPrice.toFixed(2)}</Text>
-                      )}
-                    </View>
-                  </Pressable>
+                    {/* Quantity controls or price */}
+                    {ingredient.hasProduct && !isOutOfStock ? (
+                      <View style={styles.quantitySection}>
+                        <Text style={styles.priceText}>
+                          ${(ingredient.price * (quantity || 1)).toFixed(2)}
+                        </Text>
+                        <QuantityStepper
+                          quantity={quantity}
+                          onIncrement={() => incrementQuantity(ingredient.id)}
+                          onDecrement={() => decrementQuantity(ingredient.id)}
+                          min={0}
+                          max={10}
+                        />
+                      </View>
+                    ) : (
+                      <View style={styles.ingredientPrice}>
+                        <Text style={styles.textDisabled}>-</Text>
+                      </View>
+                    )}
+                  </View>
                 );
               })}
 
               {/* Add All to Cart Button */}
-              <Pressable style={styles.addAllButton} onPress={addAllToCart}>
+              <Pressable
+                style={[styles.addAllButton, selectedItemCount === 0 && styles.addAllButtonDisabled]}
+                onPress={addAllToCart}
+                disabled={selectedItemCount === 0}
+              >
                 <View style={styles.addAllInfo}>
-                  <Text style={styles.addAllText}>Add {selectedCount} items to cart</Text>
+                  <Text style={styles.addAllText}>
+                    Add {selectedItemCount} {selectedItemCount === 1 ? 'item' : 'items'} to cart
+                  </Text>
                   <Text style={styles.addAllPrice}>${selectedIngredientsTotal.toFixed(2)}</Text>
                 </View>
                 <Icon name="bag" size="sm" color={tokens.colors.semantic.surface.primary} />
@@ -398,7 +543,7 @@ export default function RecipeDetailScreen() {
                   </View>
                   <View style={styles.instructionContent}>
                     <Text style={styles.instructionText}>{instruction.text}</Text>
-                    {instruction.tip && (
+                    {'tip' in instruction && instruction.tip && (
                       <View style={styles.tipContainer}>
                         <Icon name="bulb" size="xs" color={tokens.colors.semantic.status.warning.default} />
                         <Text style={styles.tipText}>{instruction.tip}</Text>
@@ -503,6 +648,30 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tokens.colors.semantic.surface.primary,
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: tokens.colors.semantic.surface.primary,
+  },
+  loadingBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: tokens.colors.semantic.surface.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: tokens.spacing[4],
+    marginTop: tokens.spacing[2],
+  },
+  loadingContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: tokens.spacing[4],
+  },
+  loadingText: {
+    color: tokens.colors.semantic.text.secondary,
+    fontSize: 16,
   },
   heroContainer: {
     position: 'relative',
@@ -716,8 +885,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
+  noProductText: {
+    color: tokens.colors.semantic.text.tertiary,
+    fontSize: 11,
+    marginTop: 2,
+  },
   ingredientPrice: {
     alignItems: 'flex-end',
+  },
+  quantitySection: {
+    alignItems: 'flex-end',
+    gap: tokens.spacing[2],
   },
   priceText: {
     color: tokens.colors.semantic.text.primary,
@@ -739,6 +917,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: tokens.spacing[4],
     marginTop: tokens.spacing[4],
     marginBottom: tokens.spacing[2],
+  },
+  addAllButtonDisabled: {
+    backgroundColor: tokens.colors.semantic.text.tertiary,
+    opacity: 0.6,
   },
   addAllInfo: {
     flex: 1,

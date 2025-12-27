@@ -6,6 +6,7 @@ import Animated, {
   useAnimatedStyle,
   useScrollOffset,
 } from 'react-native-reanimated';
+import { tokens } from '@thriptify/tokens/react-native';
 
 import { ThemedView } from '@/components/themed-view';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -72,8 +73,8 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 32,
-    gap: 16,
+    padding: tokens.spacing[8],
+    gap: tokens.spacing[4],
     overflow: 'hidden',
   },
 });

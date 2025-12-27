@@ -107,14 +107,14 @@ export function BannerCarousel({
               <View style={styles.bannerTextContainer}>
                 <Text
                   variant="h3"
-                  style={[styles.bannerTitle, { color: item.textColor || '#FFFFFF' }]}
+                  style={[styles.bannerTitle, { color: item.textColor || tokens.colors.semantic.text.inverse }]}
                 >
                   {item.title}
                 </Text>
                 {item.subtitle && (
                   <Text
                     variant="body"
-                    style={[styles.bannerSubtitle, { color: item.textColor || '#FFFFFF' }]}
+                    style={[styles.bannerSubtitle, { color: item.textColor || tokens.colors.semantic.text.inverse }]}
                   >
                     {item.subtitle}
                   </Text>
@@ -175,7 +175,7 @@ const styles = StyleSheet.create({
   banner: {
     width: BANNER_WIDTH,
     height: BANNER_HEIGHT,
-    borderRadius: 16,
+    borderRadius: tokens.radius.xl + 2,
     overflow: 'hidden',
   },
   bannerContent: {

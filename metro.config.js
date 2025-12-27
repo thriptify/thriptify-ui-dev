@@ -12,12 +12,14 @@ const monorepoRoot = path.resolve(projectRoot, "..");
 const componentsPath = path.resolve(monorepoRoot, "thriptify-libs", "packages", "components");
 const tokensPath = path.resolve(monorepoRoot, "thriptify-libs", "packages", "tokens");
 const uiElementsPath = path.resolve(monorepoRoot, "thriptify-libs", "packages", "ui-elements");
+const apiTypesPath = path.resolve(monorepoRoot, "thriptify-libs", "packages", "api-types");
 
 config.watchFolders = [
   projectRoot,
   tokensPath,
   componentsPath,
   uiElementsPath,
+  apiTypesPath,
 ];
 
 // Configure resolver to handle local packages
@@ -42,6 +44,8 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       packagePath = tokensPath;
     } else if (packageName === "ui-elements") {
       packagePath = uiElementsPath;
+    } else if (packageName === "api-types") {
+      packagePath = apiTypesPath;
     } else {
       packagePath = path.resolve(monorepoRoot, "thriptify-libs", "packages", packageName);
     }

@@ -1,54 +1,40 @@
-import { ScrollView, StyleSheet, View, Pressable, Platform, FlatList } from 'react-native';
-import { useState } from 'react';
+import { ScrollView, StyleSheet, View, Pressable, Platform, Modal } from 'react-native';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Icon, Image } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
 import { useCart, getCartSavings } from '@/contexts/cart-context';
-
-// Suggested products data
-const SUGGESTED_PRODUCTS = [
-  {
-    id: 's1',
-    title: 'Organic Bananas',
-    image: 'https://images.unsplash.com/photo-1571771894821-ce9b6c11b08e?w=200&h=200&fit=crop',
-    price: 2.99,
-    originalPrice: 3.99,
-    weight: '1 bunch',
-    isVegetarian: true,
-  },
-  {
-    id: 's2',
-    title: 'Greek Yogurt',
-    image: 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=200&h=200&fit=crop',
-    price: 5.49,
-    weight: '32 oz',
-    isVegetarian: true,
-  },
-  {
-    id: 's3',
-    title: 'Fresh Orange Juice',
-    image: 'https://images.unsplash.com/photo-1621506289937-a8e4df240d0b?w=200&h=200&fit=crop',
-    price: 6.99,
-    originalPrice: 8.99,
-    weight: '64 oz',
-    isVegetarian: true,
-  },
-  {
-    id: 's4',
-    title: 'Whole Wheat Bread',
-    image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=200&h=200&fit=crop',
-    price: 4.49,
-    weight: '24 oz',
-    isVegetarian: true,
-  },
-];
+import { useAppAuth } from '@/contexts/auth-context';
 
 export default function CartScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { items, itemCount, subtotal, deliveryFee, handlingFee, total, updateQuantity, removeItem, addItem } = useCart();
+  const { isGuest, isAuthenticated, exitGuestMode } = useAppAuth();
   const [promoCode, setPromoCode] = useState('');
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [hasShownPrompt, setHasShownPrompt] = useState(false);
+
+  // Show login prompt for guest users with items in cart (only once per session)
+  useEffect(() => {
+    if (isGuest && items.length > 0 && !hasShownPrompt) {
+      setShowLoginPrompt(true);
+      setHasShownPrompt(true);
+    }
+  }, [isGuest, items.length, hasShownPrompt]);
+
+  const handleSignIn = () => {
+    setShowLoginPrompt(false);
+    // Exit guest mode - _layout.tsx will show login screen
+    exitGuestMode();
+  };
+
+  const handleCancel = () => {
+    setShowLoginPrompt(false);
+    // Just go back - no fancy navigation
+    router.back();
+  };
 
   const savings = getCartSavings(items);
   const freeDeliveryThreshold = 35;
@@ -59,18 +45,6 @@ export default function CartScreen() {
     if (item) {
       updateQuantity(id, item.quantity + delta);
     }
-  };
-
-  const handleAddSuggested = (product: typeof SUGGESTED_PRODUCTS[0]) => {
-    addItem({
-      id: product.id,
-      title: product.title,
-      image: product.image,
-      price: product.price,
-      originalPrice: product.originalPrice,
-      weight: product.weight,
-      isVegetarian: product.isVegetarian,
-    });
   };
 
   const renderCartItem = ({ item }: { item: typeof items[0] }) => (
@@ -109,37 +83,6 @@ export default function CartScreen() {
         <Text style={styles.cartItemPrice}>${(item.price * item.quantity).toFixed(2)}</Text>
       </View>
     </View>
-  );
-
-  const renderSuggestedProduct = ({ item }: { item: typeof SUGGESTED_PRODUCTS[0] }) => (
-    <Pressable style={styles.suggestedCard}>
-      <View style={styles.suggestedImageContainer}>
-        <Image
-          source={{ uri: item.image }}
-          width="100%"
-          height={100}
-          borderRadius={8}
-        />
-        <Pressable
-          style={styles.suggestedAddButton}
-          onPress={() => handleAddSuggested(item)}
-        >
-          <Text style={styles.suggestedAddText}>ADD</Text>
-        </Pressable>
-      </View>
-      <View style={styles.suggestedInfo}>
-        <Text style={styles.suggestedWeight}>{item.weight}</Text>
-        <Text variant="caption" weight="medium" numberOfLines={2} style={styles.suggestedTitle}>
-          {item.title}
-        </Text>
-        <View style={styles.suggestedPriceRow}>
-          <Text style={styles.suggestedPrice}>${item.price.toFixed(2)}</Text>
-          {item.originalPrice && (
-            <Text style={styles.suggestedOriginalPrice}>${item.originalPrice.toFixed(2)}</Text>
-          )}
-        </View>
-      </View>
-    </Pressable>
   );
 
   // Empty cart state
@@ -211,42 +154,7 @@ export default function CartScreen() {
           ))}
         </View>
 
-        {/* Suggestions Section */}
-        <View style={styles.section}>
-          <Text variant="h4" style={styles.sectionTitle}>You might also like</Text>
-          <FlatList
-            horizontal
-            data={SUGGESTED_PRODUCTS}
-            renderItem={renderSuggestedProduct}
-            keyExtractor={item => item.id}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.suggestedList}
-          />
-        </View>
-
-        {/* See All Products */}
-        <Pressable style={styles.seeAllProducts}>
-          <View style={styles.seeAllImagesStack}>
-            {SUGGESTED_PRODUCTS.slice(0, 3).map((product, index) => (
-              <View
-                key={product.id}
-                style={[
-                  styles.stackedImage,
-                  { left: index * 20, zIndex: 3 - index }
-                ]}
-              >
-                <Image
-                  source={{ uri: product.image }}
-                  width={40}
-                  height={40}
-                  borderRadius={8}
-                />
-              </View>
-            ))}
-          </View>
-          <Text style={styles.seeAllText}>See all products</Text>
-          <Icon name="chevron-right" size="sm" color={tokens.colors.semantic.text.secondary} />
-        </Pressable>
+        {/* TODO: Add "You might also like" suggestions section later */}
 
         {/* Bill Details */}
         <View style={styles.billCard}>
@@ -346,6 +254,34 @@ export default function CartScreen() {
           <Icon name="chevron-right" size="sm" color={tokens.colors.semantic.surface.primary} />
         </Pressable>
       </View>
+
+      {/* Login Prompt Modal for Guest Users */}
+      <Modal
+        visible={showLoginPrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCancel}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalIconContainer}>
+              <Icon name="user" size="xl" color={tokens.colors.semantic.status.success.default} />
+            </View>
+            <Text variant="h3" style={styles.modalTitle}>Sign in to continue</Text>
+            <Text style={styles.modalSubtitle}>
+              Create an account or sign in to view your cart and checkout.
+            </Text>
+
+            <Pressable style={styles.signInButton} onPress={handleSignIn}>
+              <Text style={styles.signInButtonText}>Sign In or Create Account</Text>
+            </Pressable>
+
+            <Pressable style={styles.cancelButton} onPress={handleCancel}>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -486,100 +422,7 @@ const styles = StyleSheet.create({
     backgroundColor: tokens.colors.semantic.border.subtle,
     marginVertical: tokens.spacing[2],
   },
-  section: {
-    marginBottom: tokens.spacing[3],
-  },
-  sectionTitle: {
-    paddingHorizontal: tokens.spacing[4],
-    marginBottom: tokens.spacing[3],
-  },
-  suggestedList: {
-    paddingHorizontal: tokens.spacing[4],
-    gap: tokens.spacing[3],
-  },
-  suggestedCard: {
-    width: 130,
-    backgroundColor: tokens.colors.semantic.surface.primary,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  suggestedImageContainer: {
-    position: 'relative',
-  },
-  suggestedAddButton: {
-    position: 'absolute',
-    bottom: -12,
-    left: tokens.spacing[3],
-    right: tokens.spacing[3],
-    backgroundColor: tokens.colors.semantic.surface.primary,
-    borderWidth: 1,
-    borderColor: tokens.colors.semantic.status.success.default,
-    borderRadius: 6,
-    paddingVertical: tokens.spacing[1],
-    alignItems: 'center',
-  },
-  suggestedAddText: {
-    color: tokens.colors.semantic.status.success.default,
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  suggestedInfo: {
-    padding: tokens.spacing[3],
-    paddingTop: tokens.spacing[4],
-  },
-  suggestedWeight: {
-    fontSize: 11,
-    color: tokens.colors.semantic.text.tertiary,
-    marginBottom: 2,
-  },
-  suggestedTitle: {
-    marginBottom: tokens.spacing[1],
-    lineHeight: 16,
-  },
-  suggestedPriceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[1],
-  },
-  suggestedPrice: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: tokens.colors.semantic.text.primary,
-  },
-  suggestedOriginalPrice: {
-    fontSize: 11,
-    color: tokens.colors.semantic.text.tertiary,
-    textDecorationLine: 'line-through',
-  },
-  seeAllProducts: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: tokens.colors.semantic.surface.primary,
-    marginHorizontal: tokens.spacing[4],
-    padding: tokens.spacing[4],
-    borderRadius: 12,
-    marginBottom: tokens.spacing[3],
-  },
-  seeAllImagesStack: {
-    width: 80,
-    height: 40,
-    position: 'relative',
-    marginRight: tokens.spacing[2],
-  },
-  stackedImage: {
-    position: 'absolute',
-    top: 0,
-    borderWidth: 2,
-    borderColor: tokens.colors.semantic.surface.primary,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  seeAllText: {
-    flex: 1,
-    fontSize: 14,
-    color: tokens.colors.semantic.text.primary,
-    fontWeight: '500',
-  },
+  // NOTE: "You might also like" section removed - will add back later
   billCard: {
     backgroundColor: tokens.colors.semantic.surface.primary,
     marginHorizontal: tokens.spacing[4],
@@ -760,5 +603,63 @@ const styles = StyleSheet.create({
     color: tokens.colors.semantic.surface.primary,
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Login Prompt Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: tokens.spacing[4],
+  },
+  modalContent: {
+    backgroundColor: tokens.colors.semantic.surface.primary,
+    borderRadius: 20,
+    padding: tokens.spacing[6],
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+  },
+  modalIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: tokens.colors.semantic.status.success.subtle,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: tokens.spacing[4],
+  },
+  modalTitle: {
+    textAlign: 'center',
+    marginBottom: tokens.spacing[2],
+  },
+  modalSubtitle: {
+    textAlign: 'center',
+    color: tokens.colors.semantic.text.secondary,
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: tokens.spacing[5],
+  },
+  signInButton: {
+    backgroundColor: tokens.colors.semantic.status.success.default,
+    paddingVertical: tokens.spacing[4],
+    paddingHorizontal: tokens.spacing[6],
+    borderRadius: 12,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: tokens.spacing[3],
+  },
+  signInButtonText: {
+    color: tokens.colors.semantic.surface.primary,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  cancelButton: {
+    paddingVertical: tokens.spacing[3],
+  },
+  cancelButtonText: {
+    color: tokens.colors.semantic.text.secondary,
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

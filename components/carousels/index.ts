@@ -6,3 +6,6 @@ export type { DealItem, DealCarouselProps } from './DealCarousel';
 
 export { StoryCarousel } from './StoryCarousel';
 export type { StoryItem, StoryCarouselProps } from './StoryCarousel';
+
+export { StoryViewer } from './StoryViewer';
+export type { Story, StorySlide, StoryViewerProps } from './StoryViewer';

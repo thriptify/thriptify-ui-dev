@@ -1,73 +1,66 @@
-import { ScrollView, StyleSheet, View, Pressable, FlatList, Platform } from 'react-native';
-import { useState } from 'react';
+import { ScrollView, StyleSheet, View, Pressable, FlatList, Platform, ActivityIndicator } from 'react-native';
+import { useState, useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Icon, Image } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
+import { useOrders } from '@/hooks/use-api';
 
-// Mock orders data
-const ORDERS = [
-  {
-    id: 'ORD-2024-001',
-    date: 'December 5, 2024',
-    status: 'delivered',
-    total: 45.99,
-    itemCount: 5,
-    items: [
-      { id: '1', title: 'Organic Avocados', image: 'https://images.unsplash.com/photo-1523049673857-eb18f1d7b578?w=100&h=100&fit=crop', quantity: 2 },
-      { id: '2', title: 'Fresh Strawberries', image: 'https://images.unsplash.com/photo-1464965911861-746a04b4bca6?w=100&h=100&fit=crop', quantity: 1 },
-      { id: '3', title: 'Artisan Sourdough', image: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=100&h=100&fit=crop', quantity: 1 },
-    ],
-    deliveredAt: 'Dec 5, 2024 at 2:30 PM',
-  },
-  {
-    id: 'ORD-2024-002',
-    date: 'December 1, 2024',
-    status: 'delivered',
-    total: 32.50,
-    itemCount: 4,
-    items: [
-      { id: '4', title: 'Organic Milk', image: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?w=100&h=100&fit=crop', quantity: 2 },
-      { id: '5', title: 'Free Range Eggs', image: 'https://images.unsplash.com/photo-1582722872445-44dc5f7e3c8f?w=100&h=100&fit=crop', quantity: 1 },
-    ],
-    deliveredAt: 'Dec 1, 2024 at 11:15 AM',
-  },
-  {
-    id: 'ORD-2024-003',
-    date: 'November 28, 2024',
-    status: 'cancelled',
-    total: 89.99,
-    itemCount: 8,
-    items: [
-      { id: '6', title: 'Chicken Breast', image: 'https://images.unsplash.com/photo-1604503468506-a8da13d82791?w=100&h=100&fit=crop', quantity: 2 },
-      { id: '7', title: 'Basmati Rice', image: 'https://images.unsplash.com/photo-1586201375761-83865001e31c?w=100&h=100&fit=crop', quantity: 1 },
-    ],
-    cancelledReason: 'Customer requested cancellation',
-  },
-  {
-    id: 'ORD-2024-004',
-    date: 'November 20, 2024',
-    status: 'delivered',
-    total: 56.75,
-    itemCount: 6,
-    items: [
-      { id: '8', title: 'Extra Virgin Olive Oil', image: 'https://images.unsplash.com/photo-1474979266404-7eaacbcd87c5?w=100&h=100&fit=crop', quantity: 1 },
-      { id: '9', title: 'Organic Spinach', image: 'https://images.unsplash.com/photo-1576045057995-568f588f82fb?w=100&h=100&fit=crop', quantity: 2 },
-    ],
-    deliveredAt: 'Nov 20, 2024 at 4:45 PM',
-  },
-];
+// Helper to format date
+function formatDate(dateString: string): string {
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+// Helper to format delivery/cancelled date
+function formatDeliveryDate(dateString: string | null): string | null {
+  if (!dateString) return null;
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }) + ' at ' + date.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
 
 const STATUS_STYLES: Record<string, { color: string; bgColor: string; label: string }> = {
+  pending: {
+    color: tokens.colors.semantic.text.secondary,
+    bgColor: tokens.colors.semantic.surface.secondary,
+    label: 'Pending',
+  },
+  confirmed: {
+    color: tokens.colors.semantic.brand.primary.default,
+    bgColor: `${tokens.colors.semantic.brand.primary.default}15`,
+    label: 'Confirmed',
+  },
+  picking: {
+    color: tokens.colors.semantic.brand.primary.default,
+    bgColor: `${tokens.colors.semantic.brand.primary.default}15`,
+    label: 'Picking',
+  },
+  packed: {
+    color: tokens.colors.semantic.brand.primary.default,
+    bgColor: `${tokens.colors.semantic.brand.primary.default}15`,
+    label: 'Packed',
+  },
+  out_for_delivery: {
+    color: tokens.colors.semantic.brand.primary.default,
+    bgColor: `${tokens.colors.semantic.brand.primary.default}15`,
+    label: 'Out for Delivery',
+  },
   delivered: {
     color: tokens.colors.semantic.status.success.default,
     bgColor: `${tokens.colors.semantic.status.success.default}15`,
     label: 'Delivered',
-  },
-  in_progress: {
-    color: tokens.colors.semantic.brand.primary.default,
-    bgColor: `${tokens.colors.semantic.brand.primary.default}15`,
-    label: 'In Progress',
   },
   cancelled: {
     color: tokens.colors.semantic.status.error.default,
@@ -83,9 +76,13 @@ const STATUS_STYLES: Record<string, { color: string; bgColor: string; label: str
 
 const FILTER_OPTIONS = [
   { id: 'all', label: 'All' },
+  { id: 'active', label: 'Active' },
   { id: 'delivered', label: 'Delivered' },
   { id: 'cancelled', label: 'Cancelled' },
 ];
+
+// Active statuses for filtering
+const ACTIVE_STATUSES = ['pending', 'confirmed', 'picking', 'packed', 'out_for_delivery'];
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -93,27 +90,62 @@ export default function OrdersScreen() {
   const [activeFilter, setActiveFilter] = useState('all');
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
 
+  // Fetch orders from API
+  const { data: ordersData, isLoading, error, refetch } = useOrders();
+
   const handleBack = () => {
     router.back();
   };
 
   const handleReorder = (orderId: string) => {
     console.log('Reorder:', orderId);
-    // In a real app, this would add all items to cart
     router.push('/cart');
   };
 
   const handleViewDetails = (orderId: string) => {
+    // TODO: Navigate to order detail screen
     console.log('View details:', orderId);
   };
 
-  const filteredOrders = activeFilter === 'all'
-    ? ORDERS
-    : ORDERS.filter(order => order.status === activeFilter);
+  // Filter orders based on active filter
+  const filteredOrders = useMemo(() => {
+    const orders = ordersData?.orders || [];
+    if (activeFilter === 'all') return orders;
+    if (activeFilter === 'active') {
+      return orders.filter(order => ACTIVE_STATUSES.includes(order.status));
+    }
+    return orders.filter(order => order.status === activeFilter);
+  }, [ordersData?.orders, activeFilter]);
 
-  const renderOrderCard = ({ item: order }: { item: typeof ORDERS[0] }) => {
-    const statusStyle = STATUS_STYLES[order.status];
+  // Loading state
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+      </View>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <Text style={{ color: tokens.colors.semantic.text.secondary }}>{error}</Text>
+        <Pressable style={styles.retryButton} onPress={refetch}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // Define order type from API
+  type OrderType = NonNullable<typeof ordersData>['orders'][number];
+
+  const renderOrderCard = ({ item: order }: { item: OrderType }) => {
+    const statusStyle = STATUS_STYLES[order.status] || STATUS_STYLES.pending;
     const isExpanded = expandedOrder === order.id;
+    const deliveredAtFormatted = formatDeliveryDate(order.deliveredAt);
+    const cancelledAtFormatted = formatDeliveryDate(order.cancelledAt);
 
     return (
       <Pressable
@@ -123,14 +155,14 @@ export default function OrdersScreen() {
         {/* Order Header */}
         <View style={styles.orderHeader}>
           <View style={styles.orderIdRow}>
-            <Text style={styles.orderId}>{order.id}</Text>
+            <Text style={styles.orderId}>{order.orderNumber}</Text>
             <View style={[styles.statusBadge, { backgroundColor: statusStyle.bgColor }]}>
               <Text style={[styles.statusText, { color: statusStyle.color }]}>
                 {statusStyle.label}
               </Text>
             </View>
           </View>
-          <Text style={styles.orderDate}>{order.date}</Text>
+          <Text style={styles.orderDate}>{formatDate(order.createdAt)}</Text>
         </View>
 
         {/* Order Items Preview */}
@@ -144,12 +176,18 @@ export default function OrdersScreen() {
                   { marginLeft: index > 0 ? -12 : 0, zIndex: 3 - index },
                 ]}
               >
-                <Image
-                  source={{ uri: item.image }}
-                  width={40}
-                  height={40}
-                  borderRadius={8}
-                />
+                {item.productImage ? (
+                  <Image
+                    source={{ uri: item.productImage }}
+                    width={40}
+                    height={40}
+                    borderRadius={8}
+                  />
+                ) : (
+                  <View style={styles.placeholderImage}>
+                    <Icon name="cube" size="sm" color={tokens.colors.semantic.text.tertiary} />
+                  </View>
+                )}
               </View>
             ))}
             {order.itemCount > 3 && (
@@ -165,16 +203,19 @@ export default function OrdersScreen() {
         </View>
 
         {/* Delivery/Cancellation Info */}
-        {order.status === 'delivered' && order.deliveredAt && (
+        {order.status === 'delivered' && deliveredAtFormatted && (
           <View style={styles.deliveryInfo}>
             <Icon name="checkmark-circle" size="sm" color={tokens.colors.semantic.status.success.default} />
-            <Text style={styles.deliveryText}>Delivered on {order.deliveredAt}</Text>
+            <Text style={styles.deliveryText}>Delivered on {deliveredAtFormatted}</Text>
           </View>
         )}
-        {order.status === 'cancelled' && order.cancelledReason && (
+        {order.status === 'cancelled' && (
           <View style={styles.cancelledInfo}>
             <Icon name="close-circle" size="sm" color={tokens.colors.semantic.status.error.default} />
-            <Text style={styles.cancelledText}>{order.cancelledReason}</Text>
+            <Text style={styles.cancelledText}>
+              {order.cancellationReason || 'Order cancelled'}
+              {cancelledAtFormatted && ` on ${cancelledAtFormatted}`}
+            </Text>
           </View>
         )}
 
@@ -184,15 +225,23 @@ export default function OrdersScreen() {
             <Text style={styles.expandedTitle}>Order Items</Text>
             {order.items.map((item) => (
               <View key={item.id} style={styles.expandedItem}>
-                <Image
-                  source={{ uri: item.image }}
-                  width={48}
-                  height={48}
-                  borderRadius={8}
-                />
+                {item.productImage ? (
+                  <Image
+                    source={{ uri: item.productImage }}
+                    width={48}
+                    height={48}
+                    borderRadius={8}
+                  />
+                ) : (
+                  <View style={[styles.placeholderImage, { width: 48, height: 48 }]}>
+                    <Icon name="cube" size="md" color={tokens.colors.semantic.text.tertiary} />
+                  </View>
+                )}
                 <View style={styles.expandedItemInfo}>
-                  <Text style={styles.expandedItemTitle}>{item.title}</Text>
-                  <Text style={styles.expandedItemQty}>Qty: {item.quantity}</Text>
+                  <Text style={styles.expandedItemTitle}>{item.productName}</Text>
+                  <Text style={styles.expandedItemQty}>
+                    Qty: {item.quantity} · ${item.subtotal.toFixed(2)}
+                  </Text>
                 </View>
               </View>
             ))}
@@ -292,6 +341,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tokens.colors.semantic.surface.secondary,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  retryButton: {
+    marginTop: tokens.spacing[4],
+    paddingHorizontal: tokens.spacing[4],
+    paddingVertical: tokens.spacing[2],
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: tokens.colors.semantic.surface.primary,
+    fontWeight: '600',
   },
   header: {
     flexDirection: 'row',
@@ -413,6 +477,14 @@ const styles = StyleSheet.create({
     borderColor: tokens.colors.semantic.surface.primary,
     borderRadius: 10,
     overflow: 'hidden',
+  },
+  placeholderImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: tokens.colors.semantic.surface.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   moreItemsBadge: {
     width: 40,

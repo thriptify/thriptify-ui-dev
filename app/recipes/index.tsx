@@ -1,212 +1,111 @@
-import { ScrollView, StyleSheet, View, Pressable, Platform, FlatList } from 'react-native';
-import { useState } from 'react';
-import { useRouter } from 'expo-router';
+import { ScrollView, StyleSheet, View, Pressable, ActivityIndicator, NativeSyntheticEvent, NativeScrollEvent, Platform } from 'react-native';
+import { useState, useMemo, useCallback } from 'react';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
 import { Text, Icon, Image } from '@thriptify/ui-elements';
-import { SearchBar } from '@thriptify/components';
 import { tokens } from '@thriptify/tokens/react-native';
 import { FloatingCartButton } from '@/components/floating-cart-button';
+import { useRecipeHome, useRecipes, type RecipeListItem, type RecipeHomeSection } from '@/hooks/use-api';
+import { RecipeCard } from '@/components/shared';
 
-// Meal type categories
-const MEAL_CATEGORIES = [
-  { id: 'breakfast', title: 'Breakfast', image: 'https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=200&h=200&fit=crop' },
-  { id: 'lunch', title: 'Lunch', image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=200&h=200&fit=crop' },
-  { id: 'dinner', title: 'Dinner', image: 'https://images.unsplash.com/photo-1567620905732-2d1ec7ab7445?w=200&h=200&fit=crop' },
-  { id: 'snacks', title: 'Snacks', image: 'https://images.unsplash.com/photo-1621939514649-280e2ee25f60?w=200&h=200&fit=crop' },
-  { id: 'drinks', title: 'Drinks', image: 'https://images.unsplash.com/photo-1544145945-f90425340c7e?w=200&h=200&fit=crop' },
-  { id: 'dessert', title: 'Dessert', image: 'https://images.unsplash.com/photo-1551024601-bec78aea704b?w=200&h=200&fit=crop' },
-];
-
-// Filter chips
+// Filter chips for "All Recipes" section
 const FILTER_CHIPS = [
-  { id: 'quick', label: 'Quick Recipes' },
-  { id: 'veg', label: 'Veg' },
-  { id: 'diet', label: 'Diet Type', hasDropdown: true },
-  { id: 'ingredients', label: 'Ingredients', hasDropdown: true },
-  { id: 'cuisine', label: 'Cuisine', hasDropdown: true },
+  { id: 'quick', label: 'Quick Recipes', maxTime: 30 },
+  { id: 'easy', label: 'Easy', difficulty: 'easy' as const },
+  { id: 'medium', label: 'Medium', difficulty: 'medium' as const },
+  { id: 'hard', label: 'Hard', difficulty: 'hard' as const },
 ];
 
-// Today's recommendations (large cards)
-const TODAYS_RECOMMENDATIONS = [
-  {
-    id: 'rec-1',
-    title: 'Avocado Toast',
-    image: 'https://images.unsplash.com/photo-1541519227354-08fa5d50c44d?w=600&h=600&fit=crop',
-    cookingTime: 15,
-    isVegetarian: true,
-    tags: ['Breakfast', 'Healthy'],
-  },
-  {
-    id: 'rec-2',
-    title: 'Grilled Salmon Bowl',
-    image: 'https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=600&h=600&fit=crop',
-    cookingTime: 35,
-    isVegetarian: false,
-    tags: ['Main Course', 'Healthy'],
-  },
-  {
-    id: 'rec-3',
-    title: 'Mediterranean Salad',
-    image: 'https://images.unsplash.com/photo-1540189549336-e6e99c3679fe?w=600&h=600&fit=crop',
-    cookingTime: 20,
-    isVegetarian: true,
-    tags: ['Lunch', 'Vegan'],
-  },
-];
-
-// Cook in minutes (quick recipes)
-const QUICK_RECIPES = [
-  {
-    id: 'quick-1',
-    title: 'Green Smoothie',
-    image: 'https://images.unsplash.com/photo-1610970881699-44a5587cabec?w=300&h=300&fit=crop',
-    cookingTime: 5,
-    isVegetarian: true,
-    tags: ['Beverages'],
-  },
-  {
-    id: 'quick-2',
-    title: 'Overnight Oats',
-    image: 'https://images.unsplash.com/photo-1517673400267-0251440c45dc?w=300&h=300&fit=crop',
-    cookingTime: 10,
-    isVegetarian: true,
-    tags: ['Breakfast'],
-  },
-  {
-    id: 'quick-3',
-    title: 'Fruit Parfait',
-    image: 'https://images.unsplash.com/photo-1488477181946-6428a0291777?w=300&h=300&fit=crop',
-    cookingTime: 10,
-    isVegetarian: true,
-    tags: ['Dessert'],
-  },
-  {
-    id: 'quick-4',
-    title: 'Caprese Salad',
-    image: 'https://images.unsplash.com/photo-1608897013039-887f21d8c804?w=300&h=300&fit=crop',
-    cookingTime: 10,
-    isVegetarian: true,
-    tags: ['Appetizer'],
-  },
-  {
-    id: 'quick-5',
-    title: 'Bruschetta',
-    image: 'https://images.unsplash.com/photo-1572695157366-5e585ab2b69f?w=300&h=300&fit=crop',
-    cookingTime: 15,
-    isVegetarian: true,
-    tags: ['Snacks'],
-  },
-  {
-    id: 'quick-6',
-    title: 'Berry Smoothie Bowl',
-    image: 'https://images.unsplash.com/photo-1590301157890-4810ed352733?w=300&h=300&fit=crop',
-    cookingTime: 10,
-    isVegetarian: true,
-    tags: ['Breakfast'],
-  },
-];
-
-// All recipes grid
-const ALL_RECIPES = [
-  {
-    id: 'all-1',
-    title: 'Pasta Primavera',
-    image: 'https://images.unsplash.com/photo-1621996346565-e3dbc646d9a9?w=400&h=400&fit=crop',
-    cookingTime: 30,
-    isVegetarian: true,
-    tags: ['Main Course', 'Italian'],
-  },
-  {
-    id: 'all-2',
-    title: 'Chicken Stir Fry',
-    image: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=400&h=400&fit=crop',
-    cookingTime: 25,
-    isVegetarian: false,
-    tags: ['Main Course', 'Asian'],
-  },
-  {
-    id: 'all-3',
-    title: 'Veggie Buddha Bowl',
-    image: 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=400&h=400&fit=crop',
-    cookingTime: 25,
-    isVegetarian: true,
-    tags: ['Healthy', 'Vegan'],
-  },
-  {
-    id: 'all-4',
-    title: 'Beef Tacos',
-    image: 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=400&h=400&fit=crop',
-    cookingTime: 35,
-    isVegetarian: false,
-    tags: ['Main Course', 'Mexican'],
-  },
-  {
-    id: 'all-5',
-    title: 'Mushroom Risotto',
-    image: 'https://images.unsplash.com/photo-1476124369491-e7addf5db371?w=400&h=400&fit=crop',
-    cookingTime: 45,
-    isVegetarian: true,
-    tags: ['Main Course', 'Italian'],
-  },
-  {
-    id: 'all-6',
-    title: 'Shrimp Scampi',
-    image: 'https://images.unsplash.com/photo-1563379926898-05f4575a45d8?w=400&h=400&fit=crop',
-    cookingTime: 20,
-    isVegetarian: false,
-    tags: ['Main Course', 'Seafood'],
-  },
-];
-
-// Bookmarked recipes
-const BOOKMARKED_RECIPES = [
-  {
-    id: 'bm-1',
-    title: 'Chocolate Lava Cake',
-    image: 'https://images.unsplash.com/photo-1624353365286-3f8d62daad51?w=400&h=400&fit=crop',
-    cookingTime: 25,
-    isVegetarian: true,
-    tags: ['Dessert'],
-  },
-  {
-    id: 'bm-2',
-    title: 'Grilled Caesar Salad',
-    image: 'https://images.unsplash.com/photo-1550304943-4f24f54ddde9?w=400&h=400&fit=crop',
-    cookingTime: 20,
-    isVegetarian: true,
-    tags: ['Salad', 'Healthy'],
-  },
-];
-
-interface Recipe {
-  id: string;
-  title: string;
-  image: string;
-  cookingTime: number;
-  isVegetarian: boolean;
-  tags: string[];
-}
+// Section icon mapping
+const SECTION_ICONS: Record<string, string> = {
+  trending: 'flame',
+  new: 'sparkles',
+  quick: 'flash',
+  featured: 'star',
+  seasonal: 'leaf',
+};
 
 export default function RecipesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [searchText, setSearchText] = useState('');
-  const [activeFilters, setActiveFilters] = useState<string[]>([]);
-  const [bookmarks, setBookmarks] = useState<Record<string, boolean>>({
-    'bm-1': true,
-    'bm-2': true,
-  });
+  const params = useLocalSearchParams<{ category?: string; tag?: string; ingredient?: string }>();
 
-  const handleSearch = (text: string) => {
-    console.log('Search recipes:', text);
-  };
+  // State for filters (for "All Recipes" section)
+  const [activeFilters, setActiveFilters] = useState<string[]>([]);
+  const [showAllRecipes, setShowAllRecipes] = useState(false);
+
+  // Derive filter options from active filters
+  const filterOptions = useMemo(() => {
+    const opts: { maxTime?: number; difficulty?: 'easy' | 'medium' | 'hard' } = {};
+    for (const filterId of activeFilters) {
+      const filter = FILTER_CHIPS.find(f => f.id === filterId);
+      if (filter?.maxTime) opts.maxTime = filter.maxTime;
+      if (filter?.difficulty) opts.difficulty = filter.difficulty;
+    }
+    return opts;
+  }, [activeFilters]);
+
+  const isFiltered = params.category || params.tag || params.ingredient;
+
+  // Use consolidated endpoint for main page (single API call)
+  const { data: homeData, isLoading: isHomeLoading } = useRecipeHome();
+
+  // Use separate endpoint only for filtered views
+  const { data: filteredData, isLoading: isFilteredLoading } = useRecipes(
+    isFiltered ? {
+      categorySlug: params.category,
+      tagSlug: params.tag,
+      productSlug: params.ingredient,
+      limit: 50,
+      ...filterOptions,
+    } : undefined
+  );
+
+  // Use lazy-loaded "All Recipes" only when user wants to see them
+  const { data: allRecipesData, isLoading: isAllRecipesLoading } = useRecipes(
+    showAllRecipes && !isFiltered ? { limit: 50, ...filterOptions } : undefined
+  );
+
+  // Data extraction
+  const cuisines = homeData?.cuisines || [];
+  const categories = homeData?.categories || [];
+  const sections = homeData?.sections || [];
+  const filteredRecipes = filteredData?.recipes || [];
+  const allRecipes = allRecipesData?.recipes || [];
+
+  // Get product name from filtered response (when filtering by ingredient)
+  const productName = filteredData?.productName;
+
+  // Page title based on filters
+  const pageTitle = useMemo(() => {
+    if (params.ingredient) {
+      // Use the product name from API response, or format the slug
+      return productName
+        ? `Recipes with ${productName}`
+        : `Recipes with ${params.ingredient.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}`;
+    }
+    if (params.category) {
+      const cat = categories.find(c => c.slug === params.category);
+      return cat?.name || 'Recipes';
+    }
+    if (params.tag) {
+      return params.tag.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+    return 'Recipes';
+  }, [params.category, params.tag, params.ingredient, categories, productName]);
 
   const handleRecipePress = (recipeId: string) => {
     router.push(`/recipes/${recipeId}`);
   };
 
-  const handleCategoryPress = (categoryId: string) => {
-    router.push(`/recipes?category=${categoryId}`);
+  const handleCategoryPress = (categorySlug: string) => {
+    router.push(`/recipes?category=${categorySlug}`);
+  };
+
+  const handleCuisinePress = (cuisineSlug: string) => {
+    console.log('[RecipesIndex] Navigating to cuisine:', `/recipes/cuisine/${cuisineSlug}`);
+    router.push(`/recipes/cuisine/${cuisineSlug}`);
   };
 
   const toggleFilter = (filterId: string) => {
@@ -217,291 +116,369 @@ export default function RecipesScreen() {
     );
   };
 
-  const toggleBookmark = (recipeId: string) => {
-    setBookmarks(prev => ({ ...prev, [recipeId]: !prev[recipeId] }));
+  const clearFilters = () => {
+    router.replace('/recipes');
   };
 
-  const renderRecipeCard = (recipe: Recipe, size: 'large' | 'small' | 'grid') => {
-    const isBookmarked = bookmarks[recipe.id];
-
-    if (size === 'large') {
-      return (
-        <Pressable
-          key={recipe.id}
-          style={styles.largeRecipeCard}
-          onPress={() => handleRecipePress(recipe.id)}
-        >
-          <Image
-            source={{ uri: recipe.image }}
-            width="100%"
-            height={220}
-            borderRadius={16}
-          />
-          <Pressable
-            style={styles.bookmarkButton}
-            onPress={() => toggleBookmark(recipe.id)}
-          >
-            <Icon
-              name={isBookmarked ? 'bookmark-fill' : 'bookmark'}
-              size="sm"
-              color={isBookmarked ? tokens.colors.semantic.brand.primary.default : tokens.colors.semantic.surface.primary}
-            />
-          </Pressable>
-          <View style={styles.largeCardOverlay}>
-            <View style={styles.recipeTagsRow}>
-              <View style={[styles.vegIndicator, !recipe.isVegetarian && styles.nonVegIndicator]}>
-                <View style={[styles.vegDot, !recipe.isVegetarian && styles.nonVegDot]} />
-              </View>
-              {recipe.tags.map((tag, idx) => (
-                <View key={idx} style={styles.recipeTag}>
-                  <Text style={styles.recipeTagText}>{tag}</Text>
-                </View>
-              ))}
-            </View>
-            <Text variant="h4" style={styles.largeCardTitle}>{recipe.title}</Text>
-            <View style={styles.cookingTimeRow}>
-              <Icon name="time" size="xs" color="rgba(255,255,255,0.8)" />
-              <Text style={styles.cookingTimeText}>{recipe.cookingTime} mins</Text>
-            </View>
-          </View>
-        </Pressable>
-      );
+  const handleBack = () => {
+    if (params.category || params.tag || params.ingredient) {
+      router.replace('/recipes');
+    } else {
+      router.back();
     }
+  };
 
-    if (size === 'small') {
-      return (
-        <Pressable
-          key={recipe.id}
-          style={styles.smallRecipeCard}
-          onPress={() => handleRecipePress(recipe.id)}
-        >
-          <View style={styles.smallCardImageContainer}>
-            <Image
-              source={{ uri: recipe.image }}
-              width="100%"
-              height={100}
-              borderRadius={12}
-            />
-            <Pressable
-              style={styles.smallBookmarkButton}
-              onPress={() => toggleBookmark(recipe.id)}
-            >
-              <Icon
-                name={isBookmarked ? 'bookmark-fill' : 'bookmark'}
-                size="xs"
-                color={isBookmarked ? tokens.colors.semantic.brand.primary.default : tokens.colors.semantic.surface.primary}
-              />
-            </Pressable>
-          </View>
-          <View style={styles.smallCardInfo}>
-            <View style={styles.recipeTagsRow}>
-              <View style={[styles.vegIndicator, !recipe.isVegetarian && styles.nonVegIndicator]}>
-                <View style={[styles.vegDot, !recipe.isVegetarian && styles.nonVegDot]} />
-              </View>
-              <View style={styles.smallRecipeTag}>
-                <Text style={styles.smallRecipeTagText}>{recipe.tags[0]}</Text>
-              </View>
-            </View>
-            <Text variant="caption" weight="medium" numberOfLines={2} style={styles.smallCardTitle}>
-              {recipe.title}
-            </Text>
-            <View style={styles.cookingTimeRow}>
-              <Icon name="time" size="xs" color={tokens.colors.semantic.status.warning.default} />
-              <Text style={styles.smallCookingTimeText}>{recipe.cookingTime} mins</Text>
-            </View>
-          </View>
-        </Pressable>
-      );
-    }
+  const isLoading = isFiltered ? isFilteredLoading : isHomeLoading;
 
-    // Grid card
-    return (
-      <Pressable
-        key={recipe.id}
-        style={styles.gridRecipeCard}
-        onPress={() => handleRecipePress(recipe.id)}
-      >
-        <Image
-          source={{ uri: recipe.image }}
-          width="100%"
-          height={160}
-          borderRadius={12}
-        />
-        <Pressable
-          style={styles.gridBookmarkButton}
-          onPress={() => toggleBookmark(recipe.id)}
-        >
+  // Track scroll position to show/hide header background
+  const [showHeaderBg, setShowHeaderBg] = useState(false);
+  const heroHeight = 280;
+  const scrollThreshold = heroHeight - insets.top - 60;
+
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const scrollY = event.nativeEvent.contentOffset.y;
+    setShowHeaderBg(scrollY > scrollThreshold);
+  }, [scrollThreshold]);
+
+  // Render a recipe section (horizontal scroll)
+  const renderSection = (section: RecipeHomeSection) => (
+    <View key={section.type} style={styles.section}>
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionTitleRow}>
           <Icon
-            name={isBookmarked ? 'bookmark-fill' : 'bookmark'}
+            name={SECTION_ICONS[section.type] || 'star'}
             size="sm"
-            color={isBookmarked ? tokens.colors.semantic.brand.primary.default : tokens.colors.semantic.surface.primary}
+            color={tokens.colors.semantic.brand.primary.default}
           />
-        </Pressable>
-        <View style={styles.gridCardOverlay}>
-          <View style={styles.recipeTagsRow}>
-            <View style={[styles.vegIndicator, !recipe.isVegetarian && styles.nonVegIndicator]}>
-              <View style={[styles.vegDot, !recipe.isVegetarian && styles.nonVegDot]} />
-            </View>
-            {recipe.tags.slice(0, 2).map((tag, idx) => (
-              <View key={idx} style={styles.recipeTag}>
-                <Text style={styles.recipeTagText}>{tag}</Text>
-              </View>
-            ))}
-          </View>
-          <Text variant="bodySmall" weight="semibold" style={styles.gridCardTitle}>{recipe.title}</Text>
-          <View style={styles.cookingTimeRow}>
-            <Icon name="time" size="xs" color="rgba(255,255,255,0.8)" />
-            <Text style={styles.cookingTimeText}>{recipe.cookingTime} mins</Text>
-          </View>
+          <Text variant="h3" style={styles.sectionTitle}>{section.title}</Text>
         </View>
-      </Pressable>
-    );
-  };
+      </View>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.horizontalScrollContent}
+      >
+        {section.recipes.map((recipe) => (
+          <RecipeCard
+            key={recipe.id}
+            id={recipe.id}
+            title={recipe.title}
+            imageUrl={recipe.thumbnailUrl || recipe.imageUrl || ''}
+            prepTime={recipe.prepTime}
+            cookTime={recipe.cookTime}
+            totalTime={recipe.totalTime}
+            servings={recipe.servings}
+            difficulty={recipe.difficulty}
+            cuisine={recipe.cuisine}
+            rating={recipe.ratingAvg}
+            ratingCount={recipe.ratingCount}
+            onPress={() => handleRecipePress(recipe.id)}
+            width={200}
+          />
+        ))}
+      </ScrollView>
+    </View>
+  );
 
   return (
     <View style={styles.container}>
-      {/* Header with Hero */}
-      <View style={styles.heroContainer}>
-        <Image
-          source={{ uri: 'https://images.unsplash.com/photo-1466637574441-749b8f19452f?w=800&h=400&fit=crop' }}
-          width="100%"
-          height={280}
-          style={styles.heroImage}
-        />
-        <View style={styles.heroOverlay}>
-          <View style={[styles.heroHeader, { paddingTop: insets.top + tokens.spacing[2] }]}>
-            <Pressable style={styles.backButton} onPress={() => router.push('/')}>
-              <Icon name="chevron-left" size="md" color={tokens.colors.semantic.surface.primary} />
-            </Pressable>
-            <Pressable style={styles.searchButton}>
-              <Icon name="search" size="md" color={tokens.colors.semantic.surface.primary} />
-            </Pressable>
-          </View>
-          <View style={styles.heroContent}>
-            <Text variant="h1" style={styles.heroTitle}>Recipes</Text>
-            <Text style={styles.heroSubtitle}>Cook with passion and serve love with food</Text>
-          </View>
+      {/* Fixed Header */}
+      <View style={[styles.fixedHeader, { paddingTop: insets.top }]}>
+        {showHeaderBg && (
+          Platform.OS === 'ios' ? (
+            <BlurView intensity={80} tint="light" style={StyleSheet.absoluteFill} />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, styles.androidHeaderBg]} />
+          )
+        )}
+        <View style={styles.headerContent}>
+          <Pressable
+            style={[styles.headerButton, !showHeaderBg && styles.headerButtonOnImage]}
+            onPress={handleBack}
+          >
+            <Icon
+              name="chevron-left"
+              size="md"
+              color={showHeaderBg ? tokens.colors.semantic.text.primary : tokens.colors.semantic.surface.primary}
+            />
+          </Pressable>
+          {showHeaderBg && (
+            <Text variant="h4" style={styles.headerTitle}>{pageTitle}</Text>
+          )}
+          <Pressable
+            style={[styles.headerButton, !showHeaderBg && styles.headerButtonOnImage]}
+            onPress={() => router.push('/search?type=recipes')}
+          >
+            <Icon
+              name="search"
+              size="md"
+              color={showHeaderBg ? tokens.colors.semantic.text.primary : tokens.colors.semantic.surface.primary}
+            />
+          </Pressable>
         </View>
       </View>
 
       <ScrollView
-        style={styles.content}
-        contentContainerStyle={styles.contentContainer}
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
       >
-        {/* Meal Categories Grid */}
-        <View style={styles.section}>
-          <View style={styles.categoriesGrid}>
-            {MEAL_CATEGORIES.map((category) => (
-              <Pressable
-                key={category.id}
-                style={styles.categoryCard}
-                onPress={() => handleCategoryPress(category.id)}
-              >
-                <View style={styles.categoryImageContainer}>
-                  <Image
-                    source={{ uri: category.image }}
-                    width={80}
-                    height={80}
-                    borderRadius={12}
-                  />
-                </View>
-                <Text variant="caption" weight="medium" style={styles.categoryTitle}>
-                  {category.title}
-                </Text>
-              </Pressable>
-            ))}
+        {/* Hero */}
+        <View style={styles.heroContainer}>
+          <Image
+            source={{ uri: 'https://images.unsplash.com/photo-1466637574441-749b8f19452f?w=800&h=400&fit=crop' }}
+            width="100%"
+            height={280}
+            style={styles.heroImage}
+          />
+          <View style={styles.heroOverlay}>
+            <View style={{ height: insets.top + tokens.spacing[2] + 40 }} />
+            <View style={styles.heroContent}>
+              <Text variant="h1" style={styles.heroTitle}>{pageTitle}</Text>
+              <Text style={styles.heroSubtitle}>
+                {isFiltered ? `${filteredRecipes.length} recipes found` : 'Cook with passion and serve love with food'}
+              </Text>
+            </View>
           </View>
         </View>
 
-        {/* Bookmarked Recipes */}
-        {BOOKMARKED_RECIPES.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text variant="h3" style={styles.sectionTitle}>Bookmarked Recipes</Text>
-              <Pressable style={styles.seeAllButton}>
-                <Text style={styles.seeAllText}>see all</Text>
-                <Icon name="chevron-right" size="sm" color={tokens.colors.semantic.status.success.default} />
+        {/* Content */}
+        <View style={styles.content}>
+          {/* Filter Banner (when filtered) */}
+          {isFiltered && (
+            <View style={styles.filterBanner}>
+              <View style={styles.filterInfo}>
+                <Icon name={params.ingredient ? "nutrition" : "filter"} size="sm" color={tokens.colors.semantic.brand.primary.default} />
+                <Text variant="bodySmall" style={styles.filterText}>
+                  {params.ingredient
+                    ? `Recipes with: ${productName || params.ingredient}`
+                    : params.category
+                      ? `Category: ${params.category}`
+                      : `Tag: ${params.tag}`}
+                </Text>
+              </View>
+              <Pressable onPress={clearFilters} style={styles.clearButton}>
+                <Text style={styles.clearButtonText}>Clear</Text>
               </Pressable>
             </View>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.horizontalScrollContent}
-            >
-              {BOOKMARKED_RECIPES.map((recipe) => renderRecipeCard(recipe, 'small'))}
-            </ScrollView>
-          </View>
-        )}
+          )}
 
-        {/* Today's Recommendations */}
-        <View style={styles.section}>
-          <Text variant="h3" style={styles.sectionTitlePadded}>Today's Recommendations</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.horizontalScrollContent}
-            pagingEnabled={false}
-            snapToInterval={320}
-            decelerationRate="fast"
-          >
-            {TODAYS_RECOMMENDATIONS.map((recipe) => renderRecipeCard(recipe, 'large'))}
-          </ScrollView>
-        </View>
+          {/* Loading State */}
+          {isLoading && (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+            </View>
+          )}
 
-        {/* Cook in minutes */}
-        <View style={styles.section}>
-          <Text variant="h3" style={styles.sectionTitlePadded}>Cook in minutes</Text>
-          <View style={styles.quickRecipesGrid}>
-            {QUICK_RECIPES.map((recipe) => renderRecipeCard(recipe, 'small'))}
-          </View>
-        </View>
+          {/* === MAIN PAGE (Not Filtered) === */}
+          {!isFiltered && !isHomeLoading && (
+            <>
+              {/* Browse by Cuisine - Grid Layout */}
+              {cuisines.length > 0 && (
+                <View style={styles.section}>
+                  <Text variant="h3" style={styles.sectionTitlePadded}>Browse by Cuisine</Text>
+                  <View style={styles.cuisineGrid}>
+                    {cuisines.map((cuisine) => (
+                      <Pressable
+                        key={cuisine.slug}
+                        style={styles.cuisineGridCard}
+                        onPress={() => handleCuisinePress(cuisine.slug)}
+                      >
+                        <Image
+                          source={{ uri: cuisine.imageUrl }}
+                          width="100%"
+                          height={120}
+                          style={styles.cuisineGridImage}
+                        />
+                        <View style={styles.cuisineGridOverlay}>
+                          <Text variant="body" weight="semibold" style={styles.cuisineGridName}>
+                            {cuisine.name}
+                          </Text>
+                          <Text variant="caption" style={styles.cuisineGridCount}>
+                            {cuisine.recipeCount} recipes
+                          </Text>
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              )}
 
-        {/* All Recipes with Filters */}
-        <View style={styles.section}>
-          <Text variant="h3" style={styles.sectionTitlePadded}>All Recipes</Text>
+              {/* Recipe Sections (Trending, New, Quick & Easy, Featured) */}
+              {sections.map(renderSection)}
 
-          {/* Filter chips */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.filterChipsContent}
-            style={styles.filterChipsContainer}
-          >
-            {FILTER_CHIPS.map((filter) => {
-              const isActive = activeFilters.includes(filter.id);
-              return (
-                <Pressable
-                  key={filter.id}
-                  style={[styles.filterChip, isActive && styles.filterChipActive]}
-                  onPress={() => toggleFilter(filter.id)}
-                >
-                  <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
-                    {filter.label}
+              {/* Browse by Meal */}
+              {categories.length > 0 && (
+                <View style={styles.section}>
+                  <Text variant="h3" style={styles.sectionTitlePadded}>Browse by Meal</Text>
+                  <View style={styles.categoriesGrid}>
+                    {categories.map((category) => (
+                      <Pressable
+                        key={category.id}
+                        style={styles.categoryCard}
+                        onPress={() => handleCategoryPress(category.slug)}
+                      >
+                        <View style={styles.categoryImageContainer}>
+                          <Image
+                            source={{ uri: category.imageUrl || 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=200&h=200&fit=crop' }}
+                            width={80}
+                            height={80}
+                            borderRadius={12}
+                          />
+                        </View>
+                        <Text variant="caption" weight="medium" style={styles.categoryTitle}>
+                          {category.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              )}
+
+              {/* All Recipes (Lazy Loaded) */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text variant="h3" style={styles.sectionTitlePadded}>All Recipes</Text>
+                </View>
+
+                {!showAllRecipes ? (
+                  <Pressable
+                    style={styles.showAllButton}
+                    onPress={() => setShowAllRecipes(true)}
+                  >
+                    <Text style={styles.showAllButtonText}>Browse All Recipes</Text>
+                    <Icon name="chevron-right" size="sm" color={tokens.colors.semantic.brand.primary.default} />
+                  </Pressable>
+                ) : (
+                  <>
+                    {/* Filter Chips */}
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.filterChipsContent}
+                      style={styles.filterChipsContainer}
+                    >
+                      {FILTER_CHIPS.map((filter) => {
+                        const isActive = activeFilters.includes(filter.id);
+                        return (
+                          <Pressable
+                            key={filter.id}
+                            style={[styles.filterChip, isActive && styles.filterChipActive]}
+                            onPress={() => toggleFilter(filter.id)}
+                          >
+                            <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                              {filter.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+
+                    {/* Recipe Grid */}
+                    {isAllRecipesLoading ? (
+                      <View style={styles.loadingContainer}>
+                        <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+                      </View>
+                    ) : (
+                      <View style={styles.recipesGrid}>
+                        {allRecipes.map((recipe) => (
+                          <View key={recipe.id} style={styles.recipeGridItem}>
+                            <RecipeCard
+                              id={recipe.id}
+                              title={recipe.title}
+                              imageUrl={recipe.thumbnailUrl || recipe.imageUrl || ''}
+                              prepTime={recipe.prepTime}
+                              cookTime={recipe.cookTime}
+                              totalTime={recipe.totalTime}
+                              servings={recipe.servings}
+                              difficulty={recipe.difficulty}
+                              cuisine={recipe.cuisine}
+                              rating={recipe.ratingAvg}
+                              ratingCount={recipe.ratingCount}
+                              onPress={() => handleRecipePress(recipe.id)}
+                              width={170}
+                            />
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </>
+                )}
+              </View>
+            </>
+          )}
+
+          {/* === FILTERED VIEW === */}
+          {isFiltered && !isFilteredLoading && (
+            <>
+              {/* Filter Chips */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filterChipsContent}
+                style={styles.filterChipsContainer}
+              >
+                {FILTER_CHIPS.map((filter) => {
+                  const isActive = activeFilters.includes(filter.id);
+                  return (
+                    <Pressable
+                      key={filter.id}
+                      style={[styles.filterChip, isActive && styles.filterChipActive]}
+                      onPress={() => toggleFilter(filter.id)}
+                    >
+                      <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                        {filter.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Recipe Grid */}
+              {filteredRecipes.length > 0 ? (
+                <View style={styles.recipesGrid}>
+                  {filteredRecipes.map((recipe) => (
+                    <View key={recipe.id} style={styles.recipeGridItem}>
+                      <RecipeCard
+                        id={recipe.id}
+                        title={recipe.title}
+                        imageUrl={recipe.thumbnailUrl || recipe.imageUrl || ''}
+                        prepTime={recipe.prepTime}
+                        cookTime={recipe.cookTime}
+                        totalTime={recipe.totalTime}
+                        servings={recipe.servings}
+                        difficulty={recipe.difficulty}
+                        cuisine={recipe.cuisine}
+                        rating={recipe.ratingAvg}
+                        ratingCount={recipe.ratingCount}
+                        onPress={() => handleRecipePress(recipe.id)}
+                        width={170}
+                      />
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.emptyState}>
+                  <Icon name="restaurant" size="xl" color={tokens.colors.semantic.text.tertiary} />
+                  <Text variant="h4" style={styles.emptyTitle}>No recipes found</Text>
+                  <Text variant="body" style={styles.emptySubtitle}>
+                    Try adjusting your filters or browse all recipes
                   </Text>
-                  {filter.hasDropdown && (
-                    <Icon
-                      name="chevron-down"
-                      size="xs"
-                      color={isActive ? tokens.colors.semantic.surface.primary : tokens.colors.semantic.text.secondary}
-                    />
-                  )}
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+                  <Pressable style={styles.browseAllButton} onPress={clearFilters}>
+                    <Text style={styles.browseAllText}>Browse All Recipes</Text>
+                  </Pressable>
+                </View>
+              )}
+            </>
+          )}
 
-          {/* Recipe grid */}
-          <View style={styles.allRecipesGrid}>
-            {ALL_RECIPES.map((recipe) => renderRecipeCard(recipe, 'grid'))}
-          </View>
+          {/* Bottom spacing */}
+          <View style={{ height: 100 }} />
         </View>
-
-        {/* Bottom spacing */}
-        <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Floating Cart Button */}
       <FloatingCartButton bottomOffset={insets.bottom + 16} />
     </View>
   );
@@ -511,6 +488,47 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tokens.colors.semantic.surface.primary,
+  },
+  fixedHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    overflow: 'hidden',
+  },
+  androidHeaderBg: {
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: tokens.spacing[4],
+    paddingTop: tokens.spacing[2],
+    paddingBottom: tokens.spacing[3],
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: 'center',
+    color: tokens.colors.semantic.text.primary,
+  },
+  headerButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: tokens.colors.semantic.surface.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerButtonOnImage: {
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
   heroContainer: {
     position: 'relative',
@@ -525,27 +543,6 @@ const styles = StyleSheet.create({
   heroOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  heroHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: tokens.spacing[4],
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   heroContent: {
     flex: 1,
@@ -564,22 +561,57 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   content: {
-    flex: 1,
     marginTop: -tokens.spacing[6],
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     backgroundColor: tokens.colors.semantic.surface.primary,
-  },
-  contentContainer: {
     paddingTop: tokens.spacing[6],
+  },
+  loadingContainer: {
+    paddingVertical: tokens.spacing[8],
+    alignItems: 'center',
+  },
+  filterBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: tokens.spacing[4],
+    marginBottom: tokens.spacing[4],
+    paddingHorizontal: tokens.spacing[3],
+    paddingVertical: tokens.spacing[2],
+    backgroundColor: tokens.colors.semantic.brand.primary.subtle,
+    borderRadius: tokens.radius.md,
+  },
+  filterInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: tokens.spacing[2],
+  },
+  filterText: {
+    color: tokens.colors.semantic.brand.primary.default,
+  },
+  clearButton: {
+    paddingHorizontal: tokens.spacing[3],
+    paddingVertical: tokens.spacing[1],
+  },
+  clearButtonText: {
+    color: tokens.colors.semantic.brand.primary.default,
+    fontWeight: '600',
+    fontSize: 13,
   },
   section: {
     marginBottom: tokens.spacing[6],
   },
   sectionHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingRight: tokens.spacing[4],
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: tokens.spacing[2],
     paddingHorizontal: tokens.spacing[4],
     marginBottom: tokens.spacing[3],
   },
@@ -591,17 +623,41 @@ const styles = StyleSheet.create({
     marginBottom: tokens.spacing[3],
     color: tokens.colors.semantic.text.primary,
   },
-  seeAllButton: {
+  // Cuisine grid
+  cuisineGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[1],
+    flexWrap: 'wrap',
+    paddingHorizontal: tokens.spacing[4],
+    gap: tokens.spacing[3],
   },
-  seeAllText: {
-    color: tokens.colors.semantic.status.success.default,
-    fontSize: 14,
-    fontWeight: '500',
+  cuisineGridCard: {
+    width: '48%',
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: tokens.colors.semantic.surface.secondary,
   },
-  // Meal categories grid
+  cuisineGridImage: {
+    borderRadius: 0,
+  },
+  cuisineGridOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingVertical: tokens.spacing[2],
+    paddingHorizontal: tokens.spacing[3],
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  cuisineGridName: {
+    color: tokens.colors.semantic.text.inverse,
+    fontSize: 15,
+  },
+  cuisineGridCount: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  // Categories grid
   categoriesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -628,168 +684,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: tokens.spacing[4],
     gap: tokens.spacing[3],
   },
-  // Large recipe card
-  largeRecipeCard: {
-    width: 300,
-    borderRadius: 16,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  bookmarkButton: {
-    position: 'absolute',
-    top: tokens.spacing[3],
-    right: tokens.spacing[3],
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  largeCardOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: tokens.spacing[4],
-    background: 'linear-gradient(transparent, rgba(0,0,0,0.7))',
-  },
-  recipeTagsRow: {
+  // Show all button
+  showAllButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: tokens.spacing[4],
+    paddingVertical: tokens.spacing[3],
+    backgroundColor: tokens.colors.semantic.surface.secondary,
+    borderRadius: tokens.radius.md,
     gap: tokens.spacing[2],
-    marginBottom: tokens.spacing[1],
   },
-  vegIndicator: {
-    width: 16,
-    height: 16,
-    borderWidth: 1.5,
-    borderColor: tokens.colors.semantic.status.success.default,
-    borderRadius: 3,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: tokens.colors.semantic.surface.primary,
-  },
-  nonVegIndicator: {
-    borderColor: tokens.colors.semantic.status.error.default,
-  },
-  vegDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: tokens.colors.semantic.status.success.default,
-  },
-  nonVegDot: {
-    backgroundColor: tokens.colors.semantic.status.error.default,
-  },
-  recipeTag: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: tokens.spacing[2],
-    paddingVertical: tokens.spacing[1],
-    borderRadius: 4,
-  },
-  recipeTagText: {
-    color: tokens.colors.semantic.text.inverse,
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  largeCardTitle: {
-    color: tokens.colors.semantic.text.inverse,
-    marginBottom: tokens.spacing[1],
-  },
-  cookingTimeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[1],
-  },
-  cookingTimeText: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 12,
-  },
-  // Small recipe card
-  smallRecipeCard: {
-    width: 110,
-  },
-  smallCardImageContainer: {
-    position: 'relative',
-    marginBottom: tokens.spacing[2],
-  },
-  smallBookmarkButton: {
-    position: 'absolute',
-    top: tokens.spacing[2],
-    right: tokens.spacing[2],
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  smallCardInfo: {},
-  smallRecipeTag: {
-    backgroundColor: tokens.colors.semantic.status.success.subtle,
-    paddingHorizontal: tokens.spacing[1],
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  smallRecipeTagText: {
-    color: tokens.colors.semantic.status.success.default,
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  smallCardTitle: {
-    marginTop: tokens.spacing[1],
-    marginBottom: tokens.spacing[1],
-    color: tokens.colors.semantic.text.primary,
-  },
-  smallCookingTimeText: {
-    color: tokens.colors.semantic.text.secondary,
-    fontSize: 11,
-  },
-  // Quick recipes grid
-  quickRecipesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: tokens.spacing[4],
-    gap: tokens.spacing[3],
-  },
-  // Grid recipe card
-  gridRecipeCard: {
-    width: '48%',
-    borderRadius: 16,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  gridBookmarkButton: {
-    position: 'absolute',
-    top: tokens.spacing[2],
-    right: tokens.spacing[2],
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-  },
-  gridCardOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: tokens.spacing[3],
-  },
-  gridCardTitle: {
-    color: tokens.colors.semantic.text.inverse,
-    marginBottom: tokens.spacing[1],
-  },
-  // All recipes grid
-  allRecipesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    paddingHorizontal: tokens.spacing[4],
-    gap: tokens.spacing[3],
-    justifyContent: 'space-between',
+  showAllButtonText: {
+    color: tokens.colors.semantic.brand.primary.default,
+    fontWeight: '600',
   },
   // Filter chips
   filterChipsContainer: {
@@ -820,5 +728,41 @@ const styles = StyleSheet.create({
   },
   filterChipTextActive: {
     color: tokens.colors.semantic.surface.primary,
+  },
+  // Recipes grid
+  recipesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: tokens.spacing[4],
+    gap: tokens.spacing[3],
+  },
+  recipeGridItem: {
+    width: '47%',
+  },
+  // Empty state
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: tokens.spacing[8],
+    paddingHorizontal: tokens.spacing[4],
+  },
+  emptyTitle: {
+    marginTop: tokens.spacing[3],
+    color: tokens.colors.semantic.text.primary,
+  },
+  emptySubtitle: {
+    marginTop: tokens.spacing[2],
+    color: tokens.colors.semantic.text.secondary,
+    textAlign: 'center',
+  },
+  browseAllButton: {
+    marginTop: tokens.spacing[4],
+    paddingHorizontal: tokens.spacing[4],
+    paddingVertical: tokens.spacing[2],
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    borderRadius: tokens.radius.md,
+  },
+  browseAllText: {
+    color: tokens.colors.semantic.text.inverse,
+    fontWeight: '600',
   },
 });

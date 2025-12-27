@@ -5,10 +5,11 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text } from '@thriptify/ui-elements';
+import { tokens } from '@thriptify/tokens/react-native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 
-const ACTIVE_COLOR = '#D4A017';
-const INACTIVE_COLOR = '#6B7280';
+const ACTIVE_COLOR = tokens.colors.semantic.brand.primary.default;
+const INACTIVE_COLOR = tokens.colors.semantic.text.tertiary;
 
 const TAB_ICONS: Record<string, any> = {
   index: 'house.fill',
@@ -67,7 +68,7 @@ export function CustomTabBar({ state, descriptors, navigation }: BottomTabBarPro
                 <View style={styles.iconWrapper}>
                   {isFocused && (
                     <LinearGradient
-                      colors={['#FEF3C7', '#FDE68A', '#FCD34D']}
+                      colors={[tokens.colors.primitives.yellow[100], tokens.colors.primitives.yellow[200], tokens.colors.primitives.yellow[300]]}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 1 }}
                       style={styles.activeGradient}
@@ -106,14 +107,14 @@ const styles = StyleSheet.create({
   },
   tabBarWrapper: {
     flexDirection: 'row',
-    borderRadius: 22,
+    borderRadius: tokens.radius.xl + tokens.radius.md,
     overflow: 'hidden',
     ...(Platform.OS === 'web'
       ? {
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          boxShadow: tokens.shadows.md,
         }
       : {
-          shadowColor: '#000',
+          shadowColor: tokens.colors.primitives.black,
           shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.1,
           shadowRadius: 8,
@@ -122,17 +123,17 @@ const styles = StyleSheet.create({
   },
   tabBarOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    backgroundColor: tokens.colors.semantic.glass.surface.light,
   },
   tabBarContent: {
     flexDirection: 'row',
-    paddingVertical: 6,
-    paddingHorizontal: 16,
+    paddingVertical: tokens.spacing[1] + 2,
+    paddingHorizontal: tokens.spacing[4],
   },
   tabButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: tokens.spacing[4],
     paddingVertical: 2,
   },
   iconWrapper: {
@@ -146,11 +147,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: 36,
     height: 24,
-    borderRadius: 12,
+    borderRadius: tokens.radius.xl,
   },
   label: {
-    fontSize: 9,
-    fontWeight: '500',
+    fontSize: tokens.typography.fontSize.xs - 3,
+    fontWeight: String(tokens.typography.fontWeight.medium) as '500',
     marginTop: -2,
   },
 });

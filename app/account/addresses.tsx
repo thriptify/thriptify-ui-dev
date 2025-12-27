@@ -1,67 +1,113 @@
-import { ScrollView, StyleSheet, View, Pressable, Platform } from 'react-native';
+import { ScrollView, StyleSheet, View, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Icon } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
+import { useAddresses } from '@/hooks/use-api';
 
-// Mock addresses data
-const INITIAL_ADDRESSES = [
-  {
-    id: '1',
-    type: 'Home',
-    icon: 'home',
-    name: 'Sarah Johnson',
-    address: '123 Main Street, Apt 4B',
-    city: 'San Francisco',
-    state: 'CA',
-    zip: '94102',
-    phone: '+1 (415) 555-0123',
-    isDefault: true,
-  },
-  {
-    id: '2',
-    type: 'Work',
-    icon: 'briefcase',
-    name: 'Sarah Johnson',
-    address: '456 Market Street, Suite 200',
-    city: 'San Francisco',
-    state: 'CA',
-    zip: '94105',
-    phone: '+1 (415) 555-0456',
-    isDefault: false,
-  },
-];
+// Helper to get icon and label from address label
+function getAddressIcon(label: string): { icon: string; type: string } {
+  const lower = label?.toLowerCase() || '';
+  if (lower.includes('home')) return { icon: 'home', type: 'Home' };
+  if (lower.includes('work') || lower.includes('office')) return { icon: 'briefcase', type: 'Work' };
+  return { icon: 'location', type: label || 'Address' };
+}
 
 export default function AddressesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [addresses, setAddresses] = useState(INITIAL_ADDRESSES);
+  const { data: addresses, isLoading, error, deleteAddress, setDefaultAddress, refetch } = useAddresses();
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [isSettingDefault, setIsSettingDefault] = useState<string | null>(null);
 
   const handleBack = () => {
     router.back();
   };
 
   const handleAddAddress = () => {
-    // In a real app, this would navigate to an address form
-    console.log('Add new address');
+    // Navigate to address form (could be a modal or separate screen)
+    // For now, show a placeholder
+    Alert.alert('Add Address', 'Address form coming soon');
   };
 
   const handleEditAddress = (id: string) => {
-    console.log('Edit address:', id);
+    Alert.alert('Edit Address', 'Address edit form coming soon');
   };
 
-  const handleDeleteAddress = (id: string) => {
-    setAddresses(prev => prev.filter(addr => addr.id !== id));
+  const handleDeleteAddress = async (id: string) => {
+    Alert.alert(
+      'Delete Address',
+      'Are you sure you want to delete this address?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setIsDeleting(id);
+            try {
+              await deleteAddress(id);
+              setSelectedAddress(null);
+            } catch (err: any) {
+              console.error('[Addresses] Delete error:', err);
+              // Parse error message from API response
+              const errorMessage = err?.message || 'Failed to delete address';
+
+              // Show user-friendly message for known error cases
+              if (errorMessage.includes('pending orders')) {
+                Alert.alert(
+                  'Cannot Delete Address',
+                  'This address is being used by orders that are still being processed. You can delete it once all orders are delivered.',
+                  [{ text: 'OK' }]
+                );
+              } else {
+                Alert.alert('Error', errorMessage);
+              }
+            } finally {
+              setIsDeleting(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
-  const handleSetDefault = (id: string) => {
-    setAddresses(prev => prev.map(addr => ({
-      ...addr,
-      isDefault: addr.id === id,
-    })));
+  const handleSetDefault = async (id: string) => {
+    setIsSettingDefault(id);
+    try {
+      await setDefaultAddress(id);
+    } catch (err) {
+      console.error('[Addresses] Set default error:', err);
+      Alert.alert('Error', 'Failed to set default address');
+    } finally {
+      setIsSettingDefault(null);
+    }
   };
+
+  // Loading state
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+      </View>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <Text style={{ color: tokens.colors.semantic.text.secondary }}>{error}</Text>
+        <Pressable style={styles.retryButton} onPress={refetch}>
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  const addressList = addresses || [];
 
   return (
     <View style={styles.container}>
@@ -95,90 +141,115 @@ export default function AddressesScreen() {
 
         {/* Address Cards */}
         <View style={styles.addressList}>
-          {addresses.map((address) => (
-            <Pressable
-              key={address.id}
-              style={[
-                styles.addressCard,
-                address.isDefault && styles.addressCardDefault,
-              ]}
-              onPress={() => setSelectedAddress(selectedAddress === address.id ? null : address.id)}
-            >
-              <View style={styles.addressHeader}>
-                <View style={styles.addressTypeContainer}>
-                  <View style={[styles.addressTypeIcon, address.isDefault && styles.addressTypeIconDefault]}>
-                    <Icon
-                      name={address.icon}
-                      size="sm"
-                      color={address.isDefault ? tokens.colors.semantic.brand.primary.default : tokens.colors.semantic.text.secondary}
-                    />
-                  </View>
-                  <View>
-                    <View style={styles.addressTypeRow}>
-                      <Text style={styles.addressType}>{address.type}</Text>
-                      {address.isDefault && (
-                        <View style={styles.defaultBadge}>
-                          <Text style={styles.defaultBadgeText}>Default</Text>
-                        </View>
+          {addressList.map((address) => {
+            const { icon, type } = getAddressIcon(address.label);
+            const isBeingDeleted = isDeleting === address.id;
+            const isBeingSetDefault = isSettingDefault === address.id;
+
+            return (
+              <Pressable
+                key={address.id}
+                style={[
+                  styles.addressCard,
+                  address.isDefault && styles.addressCardDefault,
+                  isBeingDeleted && styles.addressCardDisabled,
+                ]}
+                onPress={() => setSelectedAddress(selectedAddress === address.id ? null : address.id)}
+                disabled={isBeingDeleted}
+              >
+                <View style={styles.addressHeader}>
+                  <View style={styles.addressTypeContainer}>
+                    <View style={[styles.addressTypeIcon, address.isDefault && styles.addressTypeIconDefault]}>
+                      <Icon
+                        name={icon}
+                        size="sm"
+                        color={address.isDefault ? tokens.colors.semantic.brand.primary.default : tokens.colors.semantic.text.secondary}
+                      />
+                    </View>
+                    <View>
+                      <View style={styles.addressTypeRow}>
+                        <Text style={styles.addressType}>{type}</Text>
+                        {address.isDefault && (
+                          <View style={styles.defaultBadge}>
+                            <Text style={styles.defaultBadgeText}>Default</Text>
+                          </View>
+                        )}
+                      </View>
+                      {address.recipientName && (
+                        <Text style={styles.addressName}>{address.recipientName}</Text>
                       )}
                     </View>
-                    <Text style={styles.addressName}>{address.name}</Text>
                   </View>
-                </View>
-                <Pressable
-                  style={styles.moreButton}
-                  onPress={() => setSelectedAddress(selectedAddress === address.id ? null : address.id)}
-                >
-                  <Icon
-                    name={selectedAddress === address.id ? 'chevron-up' : 'chevron-down'}
-                    size="sm"
-                    color={tokens.colors.semantic.text.tertiary}
-                  />
-                </Pressable>
-              </View>
-
-              <View style={styles.addressBody}>
-                <Text style={styles.addressText}>{address.address}</Text>
-                <Text style={styles.addressText}>{address.city}, {address.state} {address.zip}</Text>
-                <Text style={styles.addressPhone}>{address.phone}</Text>
-              </View>
-
-              {/* Expanded Actions */}
-              {selectedAddress === address.id && (
-                <View style={styles.addressActions}>
                   <Pressable
-                    style={styles.actionButton}
-                    onPress={() => handleEditAddress(address.id)}
+                    style={styles.moreButton}
+                    onPress={() => setSelectedAddress(selectedAddress === address.id ? null : address.id)}
                   >
-                    <Icon name="edit" size="sm" color={tokens.colors.semantic.text.secondary} />
-                    <Text style={styles.actionButtonText}>Edit</Text>
+                    <Icon
+                      name={selectedAddress === address.id ? 'chevron-up' : 'chevron-down'}
+                      size="sm"
+                      color={tokens.colors.semantic.text.tertiary}
+                    />
                   </Pressable>
+                </View>
 
-                  {!address.isDefault && (
+                <View style={styles.addressBody}>
+                  <Text style={styles.addressText}>{address.addressLine1}</Text>
+                  {address.addressLine2 && (
+                    <Text style={styles.addressText}>{address.addressLine2}</Text>
+                  )}
+                  <Text style={styles.addressText}>{address.city}, {address.state} {address.postalCode}</Text>
+                  {address.recipientPhone && (
+                    <Text style={styles.addressPhone}>{address.recipientPhone}</Text>
+                  )}
+                </View>
+
+                {/* Expanded Actions */}
+                {selectedAddress === address.id && (
+                  <View style={styles.addressActions}>
                     <Pressable
                       style={styles.actionButton}
-                      onPress={() => handleSetDefault(address.id)}
+                      onPress={() => handleEditAddress(address.id)}
                     >
-                      <Icon name="checkmark-circle" size="sm" color={tokens.colors.semantic.text.secondary} />
-                      <Text style={styles.actionButtonText}>Set as Default</Text>
+                      <Icon name="edit" size="sm" color={tokens.colors.semantic.text.secondary} />
+                      <Text style={styles.actionButtonText}>Edit</Text>
                     </Pressable>
-                  )}
 
-                  <Pressable
-                    style={[styles.actionButton, styles.actionButtonDelete]}
-                    onPress={() => handleDeleteAddress(address.id)}
-                  >
-                    <Icon name="trash" size="sm" color={tokens.colors.semantic.status.error.default} />
-                    <Text style={[styles.actionButtonText, styles.actionButtonTextDelete]}>Delete</Text>
-                  </Pressable>
-                </View>
-              )}
-            </Pressable>
-          ))}
+                    {!address.isDefault && (
+                      <Pressable
+                        style={[styles.actionButton, isBeingSetDefault && styles.actionButtonDisabled]}
+                        onPress={() => handleSetDefault(address.id)}
+                        disabled={isBeingSetDefault}
+                      >
+                        {isBeingSetDefault ? (
+                          <ActivityIndicator size="small" color={tokens.colors.semantic.text.secondary} />
+                        ) : (
+                          <Icon name="checkmark-circle" size="sm" color={tokens.colors.semantic.text.secondary} />
+                        )}
+                        <Text style={styles.actionButtonText}>Set as Default</Text>
+                      </Pressable>
+                    )}
+
+                    <Pressable
+                      style={[styles.actionButton, styles.actionButtonDelete, isBeingDeleted && styles.actionButtonDisabled]}
+                      onPress={() => handleDeleteAddress(address.id)}
+                      disabled={isBeingDeleted}
+                    >
+                      {isBeingDeleted ? (
+                        <ActivityIndicator size="small" color={tokens.colors.semantic.status.error.default} />
+                      ) : (
+                        <Icon name="trash" size="sm" color={tokens.colors.semantic.status.error.default} />
+                      )}
+                      <Text style={[styles.actionButtonText, styles.actionButtonTextDelete]}>Delete</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </Pressable>
+            );
+          })}
         </View>
 
         {/* Empty State */}
-        {addresses.length === 0 && (
+        {addressList.length === 0 && (
           <View style={styles.emptyState}>
             <Icon name="location" size="xl" color={tokens.colors.semantic.text.tertiary} />
             <Text variant="h4" style={styles.emptyTitle}>No saved addresses</Text>
@@ -202,6 +273,21 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tokens.colors.semantic.surface.secondary,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  retryButton: {
+    marginTop: tokens.spacing[4],
+    paddingHorizontal: tokens.spacing[4],
+    paddingVertical: tokens.spacing[2],
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: tokens.colors.semantic.surface.primary,
+    fontWeight: '600',
   },
   header: {
     flexDirection: 'row',
@@ -284,6 +370,9 @@ const styles = StyleSheet.create({
   },
   addressCardDefault: {
     borderColor: tokens.colors.semantic.brand.primary.default,
+  },
+  addressCardDisabled: {
+    opacity: 0.5,
   },
   addressHeader: {
     flexDirection: 'row',
@@ -373,6 +462,9 @@ const styles = StyleSheet.create({
   },
   actionButtonDelete: {
     backgroundColor: `${tokens.colors.semantic.status.error.default}10`,
+  },
+  actionButtonDisabled: {
+    opacity: 0.6,
   },
   actionButtonText: {
     fontSize: 13,

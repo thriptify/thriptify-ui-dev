@@ -1,89 +1,304 @@
-import { ScrollView, StyleSheet, View, Pressable, Platform, TextInput } from 'react-native';
-import { useState } from 'react';
+import { ScrollView, StyleSheet, View, Pressable, Platform, ActivityIndicator, Alert } from 'react-native';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text, Icon, Image } from '@thriptify/ui-elements';
 import { tokens } from '@thriptify/tokens/react-native';
 import { useCart } from '@/contexts/cart-context';
-
-// Mock saved addresses
-const SAVED_ADDRESSES = [
-  {
-    id: '1',
-    type: 'Home',
-    name: 'Alex Smith',
-    address: '123 Market Street, Apt 4B',
-    city: 'San Francisco',
-    state: 'CA',
-    zip: '94102',
-    phone: '(415) 555-0123',
-    isDefault: true,
-  },
-  {
-    id: '2',
-    type: 'Work',
-    name: 'Alex Smith',
-    address: '456 Financial District',
-    city: 'San Francisco',
-    state: 'CA',
-    zip: '94111',
-    phone: '(415) 555-0124',
-    isDefault: false,
-  },
-];
-
-// Payment methods
-const PAYMENT_METHODS = [
-  { id: 'apple', label: 'Apple Pay', icon: 'logo-apple' },
-  { id: 'google', label: 'Google Pay', icon: 'logo-google' },
-  { id: 'card', label: 'Credit/Debit Card', icon: 'card' },
-];
-
-// Wallet balance (would come from context/API in real app)
-const WALLET_BALANCE = 24.50;
-
-// Delivery time slots
-const TIME_SLOTS = [
-  { id: '1', time: 'Within 2 hours', label: 'Express', fee: 2.99 },
-  { id: '2', time: '2:00 PM - 4:00 PM', label: 'Today', fee: 0 },
-  { id: '3', time: '4:00 PM - 6:00 PM', label: 'Today', fee: 0 },
-  { id: '4', time: '10:00 AM - 12:00 PM', label: 'Tomorrow', fee: 0 },
-];
+import { useLocation } from '@/contexts/location-context';
+import { useCheckout, useAddresses, useDeliverySlots, usePaymentMethods } from '@/hooks/use-api';
+import { DeliverySlotPicker } from '@/components/checkout';
+import {
+  CardField,
+  useStripe,
+  useConfirmSetupIntent,
+  useConfirmPayment,
+} from '@stripe/stripe-react-native';
+import type { CardFieldInput } from '@stripe/stripe-react-native';
 
 type Step = 'address' | 'delivery' | 'payment' | 'confirmation';
+
+// Helper to get address icon
+function getAddressIcon(label: string): string {
+  const lower = label?.toLowerCase() || '';
+  if (lower.includes('home')) return 'home';
+  if (lower.includes('work') || lower.includes('office')) return 'briefcase';
+  return 'location';
+}
 
 export default function CheckoutScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { items, itemCount, subtotal, deliveryFee, handlingFee, total, clearCart } = useCart();
+  const { deliveryAddress } = useLocation();
 
+  // API hooks
+  const { data: addresses, isLoading: addressesLoading } = useAddresses();
+  const { data: deliverySlots, isLoading: slotsLoading } = useDeliverySlots();
+  const {
+    data: paymentMethods,
+    isLoading: paymentMethodsLoading,
+    createSetupIntent,
+    savePaymentMethod,
+    refetch: refetchPaymentMethods,
+  } = usePaymentMethods();
+  const {
+    session,
+    isLoading: checkoutLoading,
+    error: checkoutError,
+    createSession,
+    updateSession,
+    placeOrder,
+    clearSession,
+  } = useCheckout();
+
+  // Stripe hooks
+  const { confirmSetupIntent } = useConfirmSetupIntent();
+  const { confirmPayment } = useConfirmPayment();
+
+  // Local state
   const [step, setStep] = useState<Step>('address');
-  const [selectedAddress, setSelectedAddress] = useState(SAVED_ADDRESSES[0].id);
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState(TIME_SLOTS[0].id);
-  const [selectedPayment, setSelectedPayment] = useState('apple');
+  const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
+  const [isAddingCard, setIsAddingCard] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [useWalletBalance, setUseWalletBalance] = useState(false);
+  const [orderResult, setOrderResult] = useState<{ orderNumber: string; orderId: string } | null>(null);
+  const [cardDetails, setCardDetails] = useState<CardFieldInput.Details | null>(null);
 
-  const selectedSlot = TIME_SLOTS.find(s => s.id === selectedTimeSlot);
-  const expressDeliveryFee = selectedSlot?.fee || 0;
-  const walletDiscount = useWalletBalance ? Math.min(WALLET_BALANCE, total + expressDeliveryFee) : 0;
-  const finalTotal = total + expressDeliveryFee - walletDiscount;
+  // Initialize checkout session when component mounts
+  useEffect(() => {
+    if (items.length > 0 && !session) {
+      const cartItems = items.map(item => ({
+        productId: item.id,
+        quantity: item.quantity,
+      }));
+      createSession(cartItems);
+    }
+  }, [items, session, createSession]);
+
+  // Set default address when addresses load
+  useEffect(() => {
+    if (addresses && addresses.length > 0 && !selectedAddressId) {
+      const defaultAddr = addresses.find(a => a.isDefault) || addresses[0];
+      setSelectedAddressId(defaultAddr.id);
+    }
+  }, [addresses, selectedAddressId]);
+
+  // Set default delivery slot when slots load
+  useEffect(() => {
+    if (deliverySlots && deliverySlots.length > 0 && !selectedSlotId) {
+      const availableSlot = deliverySlots.find(s => s.available);
+      if (availableSlot) {
+        setSelectedSlotId(availableSlot.id);
+      }
+    }
+  }, [deliverySlots, selectedSlotId]);
+
+  // Set default payment method when payment methods load
+  useEffect(() => {
+    if (paymentMethods && paymentMethods.length > 0 && !selectedPaymentId) {
+      const defaultPm = paymentMethods.find(pm => pm.isDefault) || paymentMethods[0];
+      setSelectedPaymentId(defaultPm.id);
+    }
+  }, [paymentMethods, selectedPaymentId]);
+
+  // Calculate totals from session or local cart
+  const summary = useMemo(() => {
+    if (session?.summary) {
+      return session.summary;
+    }
+    // Fallback to local cart values
+    const selectedSlot = deliverySlots?.find(s => s.id === selectedSlotId);
+    const expressFee = selectedSlot?.isPremium ? selectedSlot.premiumFee : 0;
+    return {
+      subtotal,
+      deliveryFee,
+      handlingFee,
+      tax: 0,
+      tip: 0,
+      discount: 0,
+      total: total + expressFee,
+    };
+  }, [session, subtotal, deliveryFee, handlingFee, total, deliverySlots, selectedSlotId]);
+
+  const selectedSlot = deliverySlots?.find(s => s.id === selectedSlotId);
+  const selectedAddress = addresses?.find(a => a.id === selectedAddressId);
+
+  const handleContinue = async () => {
+    if (step === 'address') {
+      // Update session with selected address
+      if (session && selectedAddressId) {
+        await updateSession(session.id, { addressId: selectedAddressId });
+      }
+      setStep('delivery');
+    } else if (step === 'delivery') {
+      // Update session with selected delivery slot
+      if (session && selectedSlotId) {
+        await updateSession(session.id, { deliverySlotId: selectedSlotId });
+      }
+      setStep('payment');
+    } else if (step === 'payment') {
+      // If adding a new card, save it first
+      if (isAddingCard) {
+        await handleAddCard();
+      } else {
+        await handlePlaceOrder();
+      }
+    }
+  };
+
+  // Handle adding a new card using Stripe SDK
+  const handleAddCard = async () => {
+    if (!cardDetails?.complete) {
+      Alert.alert('Error', 'Please enter complete card details');
+      return;
+    }
+
+    setIsProcessing(true);
+
+    try {
+      // 1. Create a SetupIntent on the backend
+      const setupIntent = await createSetupIntent();
+      if (!setupIntent) {
+        Alert.alert('Error', 'Failed to initialize card setup');
+        return;
+      }
+
+      // 2. Confirm the SetupIntent with Stripe SDK
+      const { setupIntent: confirmedSetupIntent, error } = await confirmSetupIntent(
+        setupIntent.clientSecret,
+        {
+          paymentMethodType: 'Card',
+        }
+      );
+
+      if (error) {
+        Alert.alert('Error', error.message);
+        return;
+      }
+
+      if (confirmedSetupIntent?.paymentMethodId) {
+        // 3. Save the payment method to our backend
+        const savedPaymentMethod = await savePaymentMethod(confirmedSetupIntent.paymentMethodId, true);
+
+        if (savedPaymentMethod) {
+          // 4. Select the new payment method
+          setSelectedPaymentId(savedPaymentMethod.id);
+          setIsAddingCard(false);
+          setCardDetails(null);
+
+          // Refresh payment methods list
+          refetchPaymentMethods();
+
+          Alert.alert('Success', 'Card added successfully!');
+        } else {
+          Alert.alert('Error', 'Failed to save card. Please try again.');
+        }
+      }
+    } catch (err) {
+      console.error('[Checkout] Add card error:', err);
+      Alert.alert('Error', 'Failed to add card. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handlePlaceOrder = async () => {
+    if (!session) {
+      Alert.alert('Error', 'No checkout session found');
+      return;
+    }
+
+    if (!selectedPaymentId && !isAddingCard) {
+      Alert.alert('Error', 'Please select a payment method');
+      return;
+    }
+
     setIsProcessing(true);
-    // Simulate order processing
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setStep('confirmation');
-    setIsProcessing(false);
+
+    try {
+      // Update session with payment method
+      if (selectedPaymentId) {
+        await updateSession(session.id, { paymentMethodId: selectedPaymentId });
+      }
+
+      // Place the order
+      const result = await placeOrder(session.id);
+
+      if (result) {
+        // Check if payment requires additional action (3D Secure)
+        if (result.requiresAction && result.clientSecret) {
+          // Use Stripe SDK to handle 3D Secure
+          const { paymentIntent, error } = await confirmPayment(result.clientSecret, {
+            paymentMethodType: 'Card',
+          });
+
+          if (error) {
+            Alert.alert('Payment Failed', error.message);
+            return;
+          }
+
+          if (paymentIntent?.status !== 'Succeeded') {
+            Alert.alert('Payment Failed', 'Payment was not completed. Please try again.');
+            return;
+          }
+        }
+
+        setOrderResult({
+          orderNumber: result.order.orderNumber,
+          orderId: result.order.id,
+        });
+        setStep('confirmation');
+        clearCart();
+        clearSession();
+      } else {
+        Alert.alert('Error', checkoutError || 'Failed to place order. Please try again.');
+      }
+    } catch (err) {
+      console.error('[Checkout] Place order error:', err);
+      Alert.alert('Error', 'Failed to place order. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleContinueShopping = () => {
-    clearCart();
-    router.replace('/');
+    // Dismiss all modals and navigate to home
+    router.dismissAll();
+    router.replace('/(tabs)');
   };
 
+  // Loading state
+  const isInitializing = addressesLoading || slotsLoading || paymentMethodsLoading || (items.length > 0 && !session && checkoutLoading);
+
+  if (isInitializing) {
+    return (
+      <View style={[styles.container, styles.loadingContainer, { paddingTop: insets.top }]}>
+        <ActivityIndicator size="large" color={tokens.colors.semantic.brand.primary.default} />
+        <Text style={styles.loadingText}>Preparing checkout...</Text>
+      </View>
+    );
+  }
+
+  // Empty cart
+  if (items.length === 0 && step !== 'confirmation') {
+    return (
+      <View style={[styles.container, styles.loadingContainer, { paddingTop: insets.top }]}>
+        <Icon name="cart" size="xl" color={tokens.colors.semantic.text.tertiary} />
+        <Text style={styles.emptyText}>Your cart is empty</Text>
+        <Pressable style={styles.shopButton} onPress={() => {
+          router.dismissAll();
+          router.replace('/(tabs)');
+        }}>
+          <Text style={styles.shopButtonText}>Start Shopping</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
   // Order Confirmation Screen
-  if (step === 'confirmation') {
+  if (step === 'confirmation' && orderResult) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
         <View style={styles.confirmationContainer}>
@@ -92,52 +307,29 @@ export default function CheckoutScreen() {
           </View>
           <Text variant="h2" style={styles.confirmationTitle}>Order Placed!</Text>
           <Text style={styles.confirmationSubtitle}>
-            Your order has been placed successfully and will be delivered within 2 hours.
+            Your order has been placed successfully and will be delivered soon.
           </Text>
 
           <View style={styles.orderIdContainer}>
             <Text style={styles.orderIdLabel}>Order ID</Text>
-            <Text variant="body" weight="semibold">#ORD{Date.now().toString().slice(-8)}</Text>
+            <Text variant="body" weight="semibold">#{orderResult.orderNumber}</Text>
           </View>
 
-          <View style={styles.confirmationCard}>
-            <Text variant="bodySmall" weight="semibold" style={styles.confirmationCardTitle}>
-              Delivery Address
-            </Text>
-            <Text style={styles.confirmationCardText}>
-              {SAVED_ADDRESSES.find(a => a.id === selectedAddress)?.address}
-            </Text>
-            <Text style={styles.confirmationCardText}>
-              {SAVED_ADDRESSES.find(a => a.id === selectedAddress)?.city}, {SAVED_ADDRESSES.find(a => a.id === selectedAddress)?.state} {SAVED_ADDRESSES.find(a => a.id === selectedAddress)?.zip}
-            </Text>
-          </View>
-
-          <View style={styles.confirmationCard}>
-            <Text variant="bodySmall" weight="semibold" style={styles.confirmationCardTitle}>
-              {itemCount} item{itemCount > 1 ? 's' : ''} ordered
-            </Text>
-            <View style={styles.orderItemsRow}>
-              {items.slice(0, 4).map((item, index) => (
-                <View key={item.id} style={[styles.orderItemImage, { marginLeft: index > 0 ? -10 : 0 }]}>
-                  <Image
-                    source={{ uri: item.image }}
-                    width={40}
-                    height={40}
-                    borderRadius={8}
-                  />
-                </View>
-              ))}
-              {items.length > 4 && (
-                <View style={styles.moreItemsBadge}>
-                  <Text style={styles.moreItemsText}>+{items.length - 4}</Text>
-                </View>
-              )}
+          {selectedAddress && (
+            <View style={styles.confirmationCard}>
+              <Text variant="bodySmall" weight="semibold" style={styles.confirmationCardTitle}>
+                Delivery Address
+              </Text>
+              <Text style={styles.confirmationCardText}>{selectedAddress.addressLine1}</Text>
+              <Text style={styles.confirmationCardText}>
+                {selectedAddress.city}, {selectedAddress.state} {selectedAddress.postalCode}
+              </Text>
             </View>
-          </View>
+          )}
 
           <View style={styles.confirmationActions}>
-            <Pressable style={styles.trackOrderButton} onPress={() => router.push('/')}>
-              <Text style={styles.trackOrderText}>Track Order</Text>
+            <Pressable style={styles.trackOrderButton} onPress={() => router.push('/account/orders')}>
+              <Text style={styles.trackOrderText}>View Orders</Text>
             </Pressable>
             <Pressable style={styles.continueShoppingButton} onPress={handleContinueShopping}>
               <Text style={styles.continueShoppingText}>Continue Shopping</Text>
@@ -198,48 +390,61 @@ export default function CheckoutScreen() {
             <Text variant="body" weight="semibold" style={styles.sectionTitle}>
               Saved Addresses
             </Text>
-            {SAVED_ADDRESSES.map((address) => (
-              <Pressable
-                key={address.id}
-                style={[
-                  styles.addressCard,
-                  selectedAddress === address.id && styles.addressCardSelected,
-                ]}
-                onPress={() => setSelectedAddress(address.id)}
-              >
-                <View style={styles.addressHeader}>
-                  <View style={styles.addressTypeContainer}>
-                    <Icon
-                      name={address.type === 'Home' ? 'home' : 'briefcase'}
-                      size="sm"
-                      color={tokens.colors.semantic.text.primary}
-                    />
-                    <Text variant="bodySmall" weight="semibold">{address.type}</Text>
-                    {address.isDefault && (
-                      <View style={styles.defaultBadge}>
-                        <Text style={styles.defaultBadgeText}>Default</Text>
-                      </View>
-                    )}
+            {addresses && addresses.length > 0 ? (
+              addresses.map((address) => (
+                <Pressable
+                  key={address.id}
+                  style={[
+                    styles.addressCard,
+                    selectedAddressId === address.id && styles.addressCardSelected,
+                  ]}
+                  onPress={() => setSelectedAddressId(address.id)}
+                >
+                  <View style={styles.addressHeader}>
+                    <View style={styles.addressTypeContainer}>
+                      <Icon
+                        name={getAddressIcon(address.label)}
+                        size="sm"
+                        color={tokens.colors.semantic.text.primary}
+                      />
+                      <Text variant="bodySmall" weight="semibold">{address.label || 'Address'}</Text>
+                      {address.isDefault && (
+                        <View style={styles.defaultBadge}>
+                          <Text style={styles.defaultBadgeText}>Default</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={[
+                      styles.radioButton,
+                      selectedAddressId === address.id && styles.radioButtonSelected,
+                    ]}>
+                      {selectedAddressId === address.id && (
+                        <View style={styles.radioButtonInner} />
+                      )}
+                    </View>
                   </View>
-                  <View style={[
-                    styles.radioButton,
-                    selectedAddress === address.id && styles.radioButtonSelected,
-                  ]}>
-                    {selectedAddress === address.id && (
-                      <View style={styles.radioButtonInner} />
-                    )}
-                  </View>
-                </View>
-                <Text style={styles.addressName}>{address.name}</Text>
-                <Text style={styles.addressText}>{address.address}</Text>
-                <Text style={styles.addressText}>
-                  {address.city}, {address.state} {address.zip}
-                </Text>
-                <Text style={styles.addressPhone}>{address.phone}</Text>
-              </Pressable>
-            ))}
+                  {address.recipientName && (
+                    <Text style={styles.addressName}>{address.recipientName}</Text>
+                  )}
+                  <Text style={styles.addressText}>{address.addressLine1}</Text>
+                  {address.addressLine2 && (
+                    <Text style={styles.addressText}>{address.addressLine2}</Text>
+                  )}
+                  <Text style={styles.addressText}>
+                    {address.city}, {address.state} {address.postalCode}
+                  </Text>
+                  {address.recipientPhone && (
+                    <Text style={styles.addressPhone}>{address.recipientPhone}</Text>
+                  )}
+                </Pressable>
+              ))
+            ) : (
+              <View style={styles.emptyAddresses}>
+                <Text style={styles.emptyAddressesText}>No saved addresses</Text>
+              </View>
+            )}
 
-            <Pressable style={styles.addNewButton}>
+            <Pressable style={styles.addNewButton} onPress={() => router.push('/account/addresses')}>
               <Icon name="plus" size="sm" color={tokens.colors.semantic.status.success.default} />
               <Text style={styles.addNewText}>Add New Address</Text>
             </Pressable>
@@ -248,127 +453,138 @@ export default function CheckoutScreen() {
 
         {/* Delivery Time Step */}
         {step === 'delivery' && (
-          <>
-            <Text variant="body" weight="semibold" style={styles.sectionTitle}>
-              Select Delivery Time
-            </Text>
-            {TIME_SLOTS.map((slot) => (
-              <Pressable
-                key={slot.id}
-                style={[
-                  styles.timeSlotCard,
-                  selectedTimeSlot === slot.id && styles.timeSlotCardSelected,
-                ]}
-                onPress={() => setSelectedTimeSlot(slot.id)}
-              >
-                <View style={styles.timeSlotInfo}>
-                  <Text variant="bodySmall" weight="semibold">{slot.time}</Text>
-                  <View style={styles.timeSlotLabelContainer}>
-                    <Text style={styles.timeSlotLabel}>{slot.label}</Text>
-                    {slot.fee > 0 && (
-                      <Text style={styles.timeSlotFee}>+${slot.fee.toFixed(2)}</Text>
-                    )}
-                  </View>
-                </View>
-                <View style={[
-                  styles.radioButton,
-                  selectedTimeSlot === slot.id && styles.radioButtonSelected,
-                ]}>
-                  {selectedTimeSlot === slot.id && (
-                    <View style={styles.radioButtonInner} />
-                  )}
-                </View>
-              </Pressable>
-            ))}
-
-            <View style={styles.deliveryNote}>
-              <Icon name="info" size="sm" color={tokens.colors.semantic.text.tertiary} />
-              <Text style={styles.deliveryNoteText}>
-                Delivery times are estimated and may vary based on traffic and weather conditions.
-              </Text>
-            </View>
-          </>
+          <DeliverySlotPicker
+            slots={deliverySlots || []}
+            selectedSlotId={selectedSlotId}
+            onSlotSelect={setSelectedSlotId}
+            isLoading={slotsLoading}
+          />
         )}
 
         {/* Payment Step */}
         {step === 'payment' && (
           <>
-            {/* Wallet Balance Section */}
-            {WALLET_BALANCE > 0 && (
-              <View style={styles.walletSection}>
+            <Text variant="body" weight="semibold" style={styles.sectionTitle}>
+              Select Payment Method
+            </Text>
+
+            {/* Saved Payment Methods */}
+            {paymentMethods && paymentMethods.length > 0 && !isAddingCard && (
+              paymentMethods.map((pm) => (
                 <Pressable
+                  key={pm.id}
                   style={[
-                    styles.walletCard,
-                    useWalletBalance && styles.walletCardActive,
+                    styles.paymentCard,
+                    selectedPaymentId === pm.id && styles.paymentCardSelected,
                   ]}
-                  onPress={() => setUseWalletBalance(!useWalletBalance)}
+                  onPress={() => setSelectedPaymentId(pm.id)}
                 >
-                  <View style={styles.walletIconContainer}>
-                    <Icon name="wallet" size="md" color={tokens.colors.semantic.surface.primary} />
-                  </View>
-                  <View style={styles.walletInfo}>
-                    <Text style={styles.walletTitle}>Thriptify Money</Text>
-                    <Text style={styles.walletBalance}>Available: ${WALLET_BALANCE.toFixed(2)}</Text>
-                  </View>
-                  <View style={styles.walletToggle}>
-                    <View style={[
-                      styles.checkbox,
-                      useWalletBalance && styles.checkboxChecked,
-                    ]}>
-                      {useWalletBalance && (
-                        <Icon name="checkmark" size="xs" color={tokens.colors.semantic.surface.primary} />
+                  <View style={styles.paymentInfo}>
+                    <Icon name="card" size="md" color={tokens.colors.semantic.text.primary} />
+                    <View>
+                      <Text variant="bodySmall" weight="medium" style={styles.paymentLabel}>
+                        {pm.cardBrand ? pm.cardBrand.charAt(0).toUpperCase() + pm.cardBrand.slice(1) : 'Card'} •••• {pm.cardLastFour}
+                      </Text>
+                      {pm.cardExpMonth && pm.cardExpYear && (
+                        <Text style={styles.paymentSubtext}>
+                          Expires {pm.cardExpMonth}/{pm.cardExpYear.toString().slice(-2)}
+                        </Text>
                       )}
                     </View>
+                    {pm.isDefault && (
+                      <View style={styles.defaultBadge}>
+                        <Text style={styles.defaultBadgeText}>Default</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={[
+                    styles.radioButton,
+                    selectedPaymentId === pm.id && styles.radioButtonSelected,
+                  ]}>
+                    {selectedPaymentId === pm.id && (
+                      <View style={styles.radioButtonInner} />
+                    )}
                   </View>
                 </Pressable>
-                {useWalletBalance && (
-                  <View style={styles.walletAppliedNote}>
-                    <Icon name="checkmark-circle" size="sm" color={tokens.colors.semantic.status.success.default} />
-                    <Text style={styles.walletAppliedText}>
-                      ${walletDiscount.toFixed(2)} will be applied from your wallet
-                    </Text>
-                  </View>
-                )}
+              ))
+            )}
+
+            {/* Add New Card Button */}
+            {!isAddingCard && (
+              <Pressable
+                style={styles.addNewButton}
+                onPress={() => {
+                  setIsAddingCard(true);
+                  setSelectedPaymentId(null);
+                }}
+              >
+                <Icon name="add" size="sm" color={tokens.colors.semantic.status.success.default} />
+                <Text style={styles.addNewText}>Add New Card</Text>
+              </Pressable>
+            )}
+
+            {/* Card Input Form */}
+            {isAddingCard && (
+              <View style={styles.cardFormContainer}>
+                <View style={styles.cardFormHeader}>
+                  <Text variant="bodySmall" weight="semibold">Enter Card Details</Text>
+                  <Pressable onPress={() => {
+                    setIsAddingCard(false);
+                    setCardDetails(null);
+                    if (paymentMethods && paymentMethods.length > 0) {
+                      const defaultPm = paymentMethods.find(pm => pm.isDefault) || paymentMethods[0];
+                      setSelectedPaymentId(defaultPm.id);
+                    }
+                  }}>
+                    <Text style={styles.cancelText}>Cancel</Text>
+                  </Pressable>
+                </View>
+                <CardField
+                  postalCodeEnabled={true}
+                  placeholders={{
+                    number: '4242 4242 4242 4242',
+                  }}
+                  cardStyle={{
+                    backgroundColor: tokens.colors.semantic.surface.secondary,
+                    textColor: tokens.colors.semantic.text.primary,
+                    borderWidth: 1,
+                    borderColor: tokens.colors.semantic.border.default,
+                    borderRadius: 8,
+                    fontSize: 16,
+                    placeholderColor: tokens.colors.semantic.text.tertiary,
+                  }}
+                  style={styles.cardField}
+                  onCardChange={(details) => {
+                    setCardDetails(details);
+                  }}
+                />
+                <Pressable
+                  style={[
+                    styles.addCardButton,
+                    (!cardDetails?.complete || isProcessing) && styles.addCardButtonDisabled,
+                  ]}
+                  onPress={handleAddCard}
+                  disabled={!cardDetails?.complete || isProcessing}
+                >
+                  {isProcessing ? (
+                    <ActivityIndicator size="small" color={tokens.colors.semantic.surface.primary} />
+                  ) : (
+                    <Text style={styles.addCardButtonText}>Add Card</Text>
+                  )}
+                </Pressable>
+                <View style={styles.cardSecurityNote}>
+                  <Icon name="lock-closed" size="xs" color={tokens.colors.semantic.text.tertiary} />
+                  <Text style={styles.cardSecurityText}>
+                    Your card information is encrypted and secure
+                  </Text>
+                </View>
               </View>
             )}
 
-            <Text variant="body" weight="semibold" style={styles.sectionTitle}>
-              {finalTotal > 0 ? 'Select Payment Method' : 'Confirm Payment'}
-            </Text>
-            {finalTotal > 0 ? (
-              <>
-                {PAYMENT_METHODS.map((method) => (
-                  <Pressable
-                    key={method.id}
-                    style={[
-                      styles.paymentCard,
-                      selectedPayment === method.id && styles.paymentCardSelected,
-                    ]}
-                    onPress={() => setSelectedPayment(method.id)}
-                  >
-                    <View style={styles.paymentInfo}>
-                      <Icon name={method.icon} size="md" color={tokens.colors.semantic.text.primary} />
-                      <Text variant="bodySmall" weight="medium" style={styles.paymentLabel}>
-                        {method.label}
-                      </Text>
-                    </View>
-                    <View style={[
-                      styles.radioButton,
-                      selectedPayment === method.id && styles.radioButtonSelected,
-                    ]}>
-                      {selectedPayment === method.id && (
-                        <View style={styles.radioButtonInner} />
-                      )}
-                    </View>
-                  </Pressable>
-                ))}
-              </>
-            ) : (
-              <View style={styles.fullWalletPayment}>
-                <Icon name="checkmark-circle" size="lg" color={tokens.colors.semantic.status.success.default} />
-                <Text style={styles.fullWalletText}>
-                  Your entire order will be paid using Thriptify Money
-                </Text>
+            {/* No Payment Methods */}
+            {(!paymentMethods || paymentMethods.length === 0) && !isAddingCard && (
+              <View style={styles.emptyAddresses}>
+                <Text style={styles.emptyAddressesText}>No saved payment methods</Text>
               </View>
             )}
 
@@ -379,43 +595,41 @@ export default function CheckoutScreen() {
               </Text>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Items ({itemCount})</Text>
-                <Text style={styles.summaryValue}>${subtotal.toFixed(2)}</Text>
-              </View>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Handling Fee</Text>
-                <Text style={styles.summaryValue}>${handlingFee.toFixed(2)}</Text>
+                <Text style={styles.summaryValue}>${summary.subtotal.toFixed(2)}</Text>
               </View>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Delivery Fee</Text>
                 <Text style={styles.summaryValue}>
-                  {deliveryFee === 0 ? 'FREE' : `$${deliveryFee.toFixed(2)}`}
+                  {summary.deliveryFee === 0 ? 'FREE' : `$${summary.deliveryFee.toFixed(2)}`}
                 </Text>
               </View>
-              {selectedSlot && selectedSlot.fee > 0 && (
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Handling Fee</Text>
+                <Text style={styles.summaryValue}>${summary.handlingFee.toFixed(2)}</Text>
+              </View>
+              {selectedSlot?.isPremium && (
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Express Delivery</Text>
-                  <Text style={styles.summaryValue}>${selectedSlot.fee.toFixed(2)}</Text>
+                  <Text style={styles.summaryValue}>${selectedSlot.premiumFee.toFixed(2)}</Text>
                 </View>
               )}
-              {useWalletBalance && walletDiscount > 0 && (
+              {summary.tax > 0 && (
                 <View style={styles.summaryRow}>
-                  <Text style={[styles.summaryLabel, styles.walletDiscountLabel]}>Thriptify Money</Text>
-                  <Text style={styles.walletDiscountValue}>-${walletDiscount.toFixed(2)}</Text>
+                  <Text style={styles.summaryLabel}>Tax</Text>
+                  <Text style={styles.summaryValue}>${summary.tax.toFixed(2)}</Text>
+                </View>
+              )}
+              {summary.discount > 0 && (
+                <View style={styles.summaryRow}>
+                  <Text style={[styles.summaryLabel, styles.discountLabel]}>Discount</Text>
+                  <Text style={styles.discountValue}>-${summary.discount.toFixed(2)}</Text>
                 </View>
               )}
               <View style={styles.summaryDivider} />
               <View style={styles.summaryRow}>
                 <Text variant="body" weight="bold">Total</Text>
-                <Text variant="body" weight="bold">${finalTotal.toFixed(2)}</Text>
+                <Text variant="body" weight="bold">${summary.total.toFixed(2)}</Text>
               </View>
-              {useWalletBalance && walletDiscount > 0 && (
-                <View style={styles.savingsNote}>
-                  <Icon name="pricetag" size="xs" color={tokens.colors.semantic.status.success.default} />
-                  <Text style={styles.savingsNoteText}>
-                    You're saving ${walletDiscount.toFixed(2)} with Thriptify Money!
-                  </Text>
-                </View>
-              )}
             </View>
           </>
         )}
@@ -427,23 +641,27 @@ export default function CheckoutScreen() {
       {/* Bottom CTA */}
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + tokens.spacing[3] }]}>
         <Pressable
-          style={[styles.continueButton, isProcessing && styles.continueButtonDisabled]}
-          onPress={() => {
-            if (step === 'address') {
-              setStep('delivery');
-            } else if (step === 'delivery') {
-              setStep('payment');
-            } else if (step === 'payment') {
-              handlePlaceOrder();
-            }
-          }}
-          disabled={isProcessing}
+          style={[
+            styles.continueButton,
+            (isProcessing || checkoutLoading) && styles.continueButtonDisabled,
+          ]}
+          onPress={handleContinue}
+          disabled={
+            isProcessing ||
+            checkoutLoading ||
+            !selectedAddressId ||
+            (step === 'payment' && !selectedPaymentId)
+          }
         >
-          <Text style={styles.continueButtonText}>
-            {isProcessing ? 'Processing...' : step === 'payment' ? `Pay $${finalTotal.toFixed(2)}` : 'Continue'}
-          </Text>
-          {!isProcessing && (
-            <Icon name="chevron-right" size="sm" color={tokens.colors.semantic.surface.primary} />
+          {isProcessing || checkoutLoading ? (
+            <ActivityIndicator size="small" color={tokens.colors.semantic.surface.primary} />
+          ) : (
+            <>
+              <Text style={styles.continueButtonText}>
+                {step === 'payment' ? `Pay $${summary.total.toFixed(2)}` : 'Continue'}
+              </Text>
+              <Icon name="chevron-right" size="sm" color={tokens.colors.semantic.surface.primary} />
+            </>
           )}
         </Pressable>
       </View>
@@ -455,6 +673,30 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: tokens.colors.semantic.surface.secondary,
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: tokens.spacing[4],
+    color: tokens.colors.semantic.text.secondary,
+  },
+  emptyText: {
+    marginTop: tokens.spacing[4],
+    color: tokens.colors.semantic.text.secondary,
+    fontSize: 16,
+  },
+  shopButton: {
+    marginTop: tokens.spacing[4],
+    paddingHorizontal: tokens.spacing[6],
+    paddingVertical: tokens.spacing[3],
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    borderRadius: 12,
+  },
+  shopButtonText: {
+    color: tokens.colors.semantic.surface.primary,
+    fontWeight: '600',
   },
   header: {
     flexDirection: 'row',
@@ -595,6 +837,16 @@ const styles = StyleSheet.create({
     color: tokens.colors.semantic.text.secondary,
     marginTop: tokens.spacing[1],
   },
+  emptyAddresses: {
+    backgroundColor: tokens.colors.semantic.surface.primary,
+    borderRadius: 12,
+    padding: tokens.spacing[6],
+    alignItems: 'center',
+    marginBottom: tokens.spacing[3],
+  },
+  emptyAddressesText: {
+    color: tokens.colors.semantic.text.tertiary,
+  },
   addNewButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -610,53 +862,6 @@ const styles = StyleSheet.create({
   addNewText: {
     color: tokens.colors.semantic.status.success.default,
     fontWeight: '500',
-  },
-  timeSlotCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: tokens.colors.semantic.surface.primary,
-    borderRadius: 12,
-    padding: tokens.spacing[4],
-    marginBottom: tokens.spacing[3],
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  timeSlotCardSelected: {
-    borderColor: tokens.colors.semantic.status.success.default,
-  },
-  timeSlotInfo: {
-    flex: 1,
-  },
-  timeSlotLabelContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[2],
-    marginTop: 2,
-  },
-  timeSlotLabel: {
-    fontSize: 13,
-    color: tokens.colors.semantic.text.secondary,
-  },
-  timeSlotFee: {
-    fontSize: 13,
-    color: tokens.colors.semantic.status.success.default,
-    fontWeight: '500',
-  },
-  deliveryNote: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: tokens.spacing[2],
-    backgroundColor: tokens.colors.semantic.surface.tertiary,
-    padding: tokens.spacing[3],
-    borderRadius: 8,
-    marginTop: tokens.spacing[2],
-  },
-  deliveryNoteText: {
-    flex: 1,
-    fontSize: 12,
-    color: tokens.colors.semantic.text.tertiary,
-    lineHeight: 16,
   },
   paymentCard: {
     flexDirection: 'row',
@@ -680,6 +885,58 @@ const styles = StyleSheet.create({
   paymentLabel: {
     marginLeft: tokens.spacing[1],
   },
+  paymentSubtext: {
+    fontSize: 12,
+    color: tokens.colors.semantic.text.tertiary,
+    marginLeft: tokens.spacing[1],
+  },
+  cancelText: {
+    fontSize: 14,
+    color: tokens.colors.semantic.status.error.default,
+    fontWeight: '500',
+  },
+  cardFormContainer: {
+    backgroundColor: tokens.colors.semantic.surface.primary,
+    borderRadius: 12,
+    padding: tokens.spacing[4],
+    marginBottom: tokens.spacing[3],
+  },
+  cardFormHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: tokens.spacing[3],
+  },
+  cardSecurityNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: tokens.spacing[1],
+    marginTop: tokens.spacing[3],
+  },
+  cardSecurityText: {
+    fontSize: 12,
+    color: tokens.colors.semantic.text.tertiary,
+  },
+  cardField: {
+    width: '100%',
+    height: 50,
+    marginVertical: tokens.spacing[3],
+  },
+  addCardButton: {
+    backgroundColor: tokens.colors.semantic.brand.primary.default,
+    paddingVertical: tokens.spacing[3],
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addCardButtonDisabled: {
+    opacity: 0.5,
+  },
+  addCardButtonText: {
+    color: tokens.colors.semantic.surface.primary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
   orderSummary: {
     backgroundColor: tokens.colors.semantic.surface.primary,
     borderRadius: 12,
@@ -702,6 +959,14 @@ const styles = StyleSheet.create({
   summaryValue: {
     fontSize: 14,
     color: tokens.colors.semantic.text.primary,
+  },
+  discountLabel: {
+    color: tokens.colors.semantic.status.success.default,
+  },
+  discountValue: {
+    fontSize: 14,
+    color: tokens.colors.semantic.status.success.default,
+    fontWeight: '500',
   },
   summaryDivider: {
     height: 1,
@@ -794,31 +1059,6 @@ const styles = StyleSheet.create({
     color: tokens.colors.semantic.text.secondary,
     lineHeight: 18,
   },
-  orderItemsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: tokens.spacing[2],
-  },
-  orderItemImage: {
-    borderWidth: 2,
-    borderColor: tokens.colors.semantic.surface.primary,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  moreItemsBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 8,
-    backgroundColor: tokens.colors.semantic.surface.secondary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: -10,
-  },
-  moreItemsText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: tokens.colors.semantic.text.secondary,
-  },
   confirmationActions: {
     width: '100%',
     gap: tokens.spacing[3],
@@ -847,102 +1087,5 @@ const styles = StyleSheet.create({
     color: tokens.colors.semantic.text.primary,
     fontSize: 16,
     fontWeight: '500',
-  },
-  // Wallet Section
-  walletSection: {
-    marginBottom: tokens.spacing[6],
-  },
-  walletCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: tokens.colors.semantic.brand.primary.default,
-    borderRadius: 12,
-    padding: tokens.spacing[4],
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  walletCardActive: {
-    borderColor: tokens.colors.semantic.status.success.default,
-  },
-  walletIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: tokens.spacing[3],
-  },
-  walletInfo: {
-    flex: 1,
-  },
-  walletTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: tokens.colors.semantic.surface.primary,
-    marginBottom: 2,
-  },
-  walletBalance: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.8)',
-  },
-  walletToggle: {},
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: tokens.colors.semantic.status.success.default,
-    borderColor: tokens.colors.semantic.status.success.default,
-  },
-  walletAppliedNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[2],
-    marginTop: tokens.spacing[2],
-    paddingHorizontal: tokens.spacing[2],
-  },
-  walletAppliedText: {
-    fontSize: 13,
-    color: tokens.colors.semantic.status.success.default,
-  },
-  fullWalletPayment: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[3],
-    backgroundColor: `${tokens.colors.semantic.status.success.default}15`,
-    borderRadius: 12,
-    padding: tokens.spacing[4],
-    marginBottom: tokens.spacing[3],
-  },
-  fullWalletText: {
-    flex: 1,
-    fontSize: 14,
-    color: tokens.colors.semantic.status.success.default,
-    lineHeight: 20,
-  },
-  walletDiscountLabel: {
-    color: tokens.colors.semantic.brand.primary.default,
-  },
-  walletDiscountValue: {
-    fontSize: 14,
-    color: tokens.colors.semantic.status.success.default,
-    fontWeight: '500',
-  },
-  savingsNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: tokens.spacing[1],
-    marginTop: tokens.spacing[2],
-    paddingTop: tokens.spacing[2],
-  },
-  savingsNoteText: {
-    fontSize: 12,
-    color: tokens.colors.semantic.status.success.default,
   },
 });
